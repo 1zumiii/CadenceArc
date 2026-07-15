@@ -1,0 +1,12 @@
+# Normalize text files while preserving platform-appropriate working copies.
+* text=auto
+
+# Unreal Engine binary assets must be stored through Git LFS.
+*.uasset filter=lfs diff=lfs merge=lfs -text
+*.umap filter=lfs diff=lfs merge=lfs -text
+
+# Keep scripts predictable across platforms.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+

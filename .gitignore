@@ -1,0 +1,38 @@
+# Unreal Engine generated directories
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Local developer content
+Content/Developers/
+Collections/
+
+# Visual Studio
+.vs/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.user
+
+# JetBrains Rider
+.idea/
+*.sln.DotSettings.user
+*.uproject.DotSettings.user
+
+# Build products and temporary files
+*.obj
+*.pdb
+*.ipch
+*.log
+*.tmp
+*~
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
