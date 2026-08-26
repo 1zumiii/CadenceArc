@@ -16,7 +16,6 @@ namespace CadenceArc::Tests
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(Action_Finisher01, "CadenceArc.Automation.Action.Finisher01");
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(Action_Finisher02, "CadenceArc.Automation.Action.Finisher02");
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(Action_Finisher03, "CadenceArc.Automation.Action.Finisher03");
-
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(Input_Light, "CadenceArc.Automation.Input.Light");
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(Input_Heavy, "CadenceArc.Automation.Input.Heavy");
 
@@ -66,7 +65,7 @@ namespace CadenceArc::Tests
 		return Graph;
 	}
 
-	static bool TestInitResult(
+	static bool TestInit(
 		FAutomationTestBase& Test,
 		const TCHAR* What,
 		const ECadenceArcResolverInitResult Actual,
@@ -75,11 +74,29 @@ namespace CadenceArc::Tests
 		return Test.TestEqual(What, static_cast<int32>(Actual), static_cast<int32>(Expected));
 	}
 
-	static bool TestTransitionResult(
+	static bool TestTransition(
 		FAutomationTestBase& Test,
 		const TCHAR* What,
 		const ECadenceArcResolverTransitionResult Actual,
 		const ECadenceArcResolverTransitionResult Expected)
+	{
+		return Test.TestEqual(What, static_cast<int32>(Actual), static_cast<int32>(Expected));
+	}
+
+	static bool TestHandshake(
+		FAutomationTestBase& Test,
+		const TCHAR* What,
+		const ECadenceArcHandshakeResult Actual,
+		const ECadenceArcHandshakeResult Expected)
+	{
+		return Test.TestEqual(What, static_cast<int32>(Actual), static_cast<int32>(Expected));
+	}
+
+	static bool TestState(
+		FAutomationTestBase& Test,
+		const TCHAR* What,
+		const ECadenceArcResolverState Actual,
+		const ECadenceArcResolverState Expected)
 	{
 		return Test.TestEqual(What, static_cast<int32>(Actual), static_cast<int32>(Expected));
 	}
@@ -97,263 +114,438 @@ namespace CadenceArc::Tests
 		FAutomationTestBase& Test,
 		UCadenceArcResolver* Resolver,
 		const FGameplayTag& InputTag,
-		const FGameplayTag& ExpectedActionTag,
-		const TCHAR* StepName)
+		const FGameplayTag& SourceTag,
+		const FGameplayTag& TargetTag,
+		FCadenceArcActionRequest& OutRequest,
+		const TCHAR* Step)
 	{
-		FGameplayTag ResolvedActionTag;
-		const ECadenceArcResolverTransitionResult Result =
-			Resolver->TryResolveInput(InputTag, ResolvedActionTag);
-
-		bool bPassed = TestTransitionResult(
-			Test, *FString::Printf(TEXT("%s returns Success"), StepName),
-			Result, ECadenceArcResolverTransitionResult::Success);
-		bPassed &= TestTag(
-			Test, *FString::Printf(TEXT("%s resolves expected action"), StepName),
-			ResolvedActionTag, ExpectedActionTag);
-		bPassed &= TestTag(
-			Test, *FString::Printf(TEXT("%s commits expected current action"), StepName),
-			Resolver->GetCurrentActionTag(), ExpectedActionTag);
+		bool bPassed = TestTransition(
+			Test, *FString::Printf(TEXT("%s resolves"), Step),
+			Resolver->TryResolveInput(InputTag, OutRequest),
+			ECadenceArcResolverTransitionResult::Success);
+		bPassed &= Test.TestTrue(
+			*FString::Printf(TEXT("%s receives a positive request ID"), Step),
+			OutRequest.RequestId > 0);
+		bPassed &= TestTag(Test, *FString::Printf(TEXT("%s records input"), Step),
+			OutRequest.InputTag, InputTag);
+		bPassed &= TestTag(Test, *FString::Printf(TEXT("%s records source"), Step),
+			OutRequest.SourceActionTag, SourceTag);
+		bPassed &= TestTag(Test, *FString::Printf(TEXT("%s records target"), Step),
+			OutRequest.TargetActionTag, TargetTag);
+		bPassed &= TestTag(Test, *FString::Printf(TEXT("%s does not commit early"), Step),
+			Resolver->GetCurrentActionTag(), SourceTag);
+		bPassed &= TestState(Test, *FString::Printf(TEXT("%s enters AwaitingStart"), Step),
+			Resolver->GetState(), ECadenceArcResolverState::AwaitingStart);
+		bPassed &= Test.TestEqual(
+			*FString::Printf(TEXT("%s exposes the outstanding request"), Step),
+			Resolver->GetOutstandingRequest().RequestId, OutRequest.RequestId);
 		return bPassed;
 	}
 
-	static bool ResolveFailureAndExpectUnchangedState(
+	static bool StartAndExpect(
+		FAutomationTestBase& Test,
+		UCadenceArcResolver* Resolver,
+		const FCadenceArcActionRequest& Request,
+		const TCHAR* Step)
+	{
+		bool bPassed = TestHandshake(
+			Test, *FString::Printf(TEXT("%s starts"), Step),
+			Resolver->NotifyActionStarted(Request.RequestId),
+			ECadenceArcHandshakeResult::Success);
+		bPassed &= TestState(Test, *FString::Printf(TEXT("%s enters Executing"), Step),
+			Resolver->GetState(), ECadenceArcResolverState::Executing);
+		bPassed &= TestTag(Test, *FString::Printf(TEXT("%s commits target"), Step),
+			Resolver->GetCurrentActionTag(), Request.TargetActionTag);
+		bPassed &= Test.TestEqual(
+			*FString::Printf(TEXT("%s keeps request while executing"), Step),
+			Resolver->GetOutstandingRequest().RequestId, Request.RequestId);
+		return bPassed;
+	}
+
+	static bool CompleteAndExpect(
+		FAutomationTestBase& Test,
+		UCadenceArcResolver* Resolver,
+		const FCadenceArcActionRequest& Request,
+		const TCHAR* Step)
+	{
+		bool bPassed = TestHandshake(
+			Test, *FString::Printf(TEXT("%s completes"), Step),
+			Resolver->NotifyActionCompleted(Request.RequestId),
+			ECadenceArcHandshakeResult::Success);
+		bPassed &= TestState(Test, *FString::Printf(TEXT("%s returns Ready"), Step),
+			Resolver->GetState(), ECadenceArcResolverState::Ready);
+		bPassed &= TestTag(Test, *FString::Printf(TEXT("%s preserves target"), Step),
+			Resolver->GetCurrentActionTag(), Request.TargetActionTag);
+		bPassed &= Test.TestEqual(
+			*FString::Printf(TEXT("%s clears request"), Step),
+			Resolver->GetOutstandingRequest().RequestId, static_cast<int64>(0));
+		return bPassed;
+	}
+
+	static bool ExecuteAndComplete(
+		FAutomationTestBase& Test,
+		UCadenceArcResolver* Resolver,
+		const FGameplayTag& InputTag,
+		const FGameplayTag& SourceTag,
+		const FGameplayTag& TargetTag,
+		const TCHAR* Step)
+	{
+		FCadenceArcActionRequest Request;
+		bool bPassed = ResolveAndExpect(Test, Resolver, InputTag, SourceTag, TargetTag, Request, Step);
+		bPassed &= StartAndExpect(Test, Resolver, Request, Step);
+		bPassed &= CompleteAndExpect(Test, Resolver, Request, Step);
+		return bPassed;
+	}
+
+	static bool ResolveFailureAndExpect(
 		FAutomationTestBase& Test,
 		UCadenceArcResolver* Resolver,
 		const FGameplayTag& InputTag,
 		const ECadenceArcResolverTransitionResult ExpectedResult,
-		const FGameplayTag& ExpectedCurrentActionTag,
-		const TCHAR* StepName)
+		const FGameplayTag& ExpectedCurrentTag,
+		const ECadenceArcResolverState ExpectedState,
+		const int64 ExpectedOutstandingId,
+		const TCHAR* Step)
 	{
-		FGameplayTag ResolvedActionTag = Action_Finisher03;
-		const ECadenceArcResolverTransitionResult Result =
-			Resolver->TryResolveInput(InputTag, ResolvedActionTag);
-
-		bool bPassed = TestTransitionResult(
-			Test, *FString::Printf(TEXT("%s returns expected failure"), StepName),
-			Result, ExpectedResult);
-		bPassed &= Test.TestFalse(
-			*FString::Printf(TEXT("%s clears output action"), StepName),
-			ResolvedActionTag.IsValid());
-		bPassed &= TestTag(
-			Test, *FString::Printf(TEXT("%s preserves current action"), StepName),
-			Resolver->GetCurrentActionTag(), ExpectedCurrentActionTag);
+		FCadenceArcActionRequest Request;
+		Request.RequestId = 999;
+		Request.TargetActionTag = Action_Finisher03;
+		bool bPassed = TestTransition(
+			Test, *FString::Printf(TEXT("%s returns expected failure"), Step),
+			Resolver->TryResolveInput(InputTag, Request), ExpectedResult);
+		bPassed &= Test.TestEqual(*FString::Printf(TEXT("%s clears output ID"), Step),
+			Request.RequestId, static_cast<int64>(0));
+		bPassed &= Test.TestFalse(*FString::Printf(TEXT("%s clears output target"), Step),
+			Request.TargetActionTag.IsValid());
+		bPassed &= TestTag(Test, *FString::Printf(TEXT("%s preserves current action"), Step),
+			Resolver->GetCurrentActionTag(), ExpectedCurrentTag);
+		bPassed &= TestState(Test, *FString::Printf(TEXT("%s preserves state"), Step),
+			Resolver->GetState(), ExpectedState);
+		bPassed &= Test.TestEqual(*FString::Printf(TEXT("%s preserves outstanding request"), Step),
+			Resolver->GetOutstandingRequest().RequestId, ExpectedOutstandingId);
 		return bPassed;
 	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcInitializeValidGraphTest,
-	"CadenceArc.Resolver.Initialize.ValidGraph",
+	FCadenceArcInitializeTest,
+	"CadenceArc.Resolver.Initialize.Contract",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FCadenceArcInitializeValidGraphTest::RunTest(const FString& Parameters)
+bool FCadenceArcInitializeTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	TestInit(*this, TEXT("Null graph is rejected"),
+		Resolver->Initialize(nullptr), ECadenceArcResolverInitResult::InvalidGraph);
+
+	UCadenceArcGraph* InvalidEntryGraph = NewObject<UCadenceArcGraph>();
+	TestInit(*this, TEXT("Invalid entry tag is rejected"),
+		Resolver->Initialize(InvalidEntryGraph), ECadenceArcResolverInitResult::InvalidEntryActionTag);
+
+	UCadenceArcGraph* MissingEntryGraph = NewObject<UCadenceArcGraph>();
+	MissingEntryGraph->EntryActionTag = Action_Root;
+	AddNode(MissingEntryGraph, Action_Light01);
+	TestInit(*this, TEXT("Missing entry node is rejected"),
+		Resolver->Initialize(MissingEntryGraph), ECadenceArcResolverInitResult::EntryNodeNotFound);
+	TestFalse(TEXT("Failures leave resolver uninitialized"), Resolver->IsInitialized());
+
+	TestInit(*this, TEXT("Valid graph initializes"),
+		Resolver->Initialize(MakeValidGraph()), ECadenceArcResolverInitResult::Success);
+	TestTrue(TEXT("Resolver reports initialized"), Resolver->IsInitialized());
+	TestState(*this, TEXT("Resolver enters Ready"),
+		Resolver->GetState(), ECadenceArcResolverState::Ready);
+	TestTag(*this, TEXT("Resolver starts at entry"),
+		Resolver->GetCurrentActionTag(), Action_Root);
+	TestEqual(TEXT("Resolver starts without an outstanding request"),
+		Resolver->GetOutstandingRequest().RequestId, static_cast<int64>(0));
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcRequestCreationTest,
+	"CadenceArc.Resolver.Resolve.RequestCreation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcRequestCreationTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	Resolver->Initialize(MakeValidGraph());
+	FCadenceArcActionRequest Request;
+	ResolveAndExpect(*this, Resolver, Input_Light,
+		Action_Root, Action_Light01, Request, TEXT("Root + Light"));
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcBusyStatesTest,
+	"CadenceArc.Resolver.Resolve.BusyStates",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcBusyStatesTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	Resolver->Initialize(MakeValidGraph());
+	FCadenceArcActionRequest Request;
+	ResolveAndExpect(*this, Resolver, Input_Light,
+		Action_Root, Action_Light01, Request, TEXT("Initial request"));
+	ResolveFailureAndExpect(*this, Resolver, Input_Heavy,
+		ECadenceArcResolverTransitionResult::RequestPending, Action_Root,
+		ECadenceArcResolverState::AwaitingStart, Request.RequestId,
+		TEXT("Resolve while awaiting start"));
+	StartAndExpect(*this, Resolver, Request, TEXT("Initial request"));
+	ResolveFailureAndExpect(*this, Resolver, Input_Heavy,
+		ECadenceArcResolverTransitionResult::ActionExecuting, Action_Light01,
+		ECadenceArcResolverState::Executing, Request.RequestId,
+		TEXT("Resolve while executing"));
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcLifecycleTest,
+	"CadenceArc.Resolver.Handshake.Lifecycle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcLifecycleTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	Resolver->Initialize(MakeValidGraph());
+
+	FCadenceArcActionRequest RejectedRequest;
+	ResolveAndExpect(*this, Resolver, Input_Light,
+		Action_Root, Action_Light01, RejectedRequest, TEXT("Rejected request"));
+	TestHandshake(*this, TEXT("Reject succeeds"),
+		Resolver->NotifyActionRejected(RejectedRequest.RequestId),
+		ECadenceArcHandshakeResult::Success);
+	TestState(*this, TEXT("Reject returns Ready"),
+		Resolver->GetState(), ECadenceArcResolverState::Ready);
+	TestTag(*this, TEXT("Reject preserves source"),
+		Resolver->GetCurrentActionTag(), Action_Root);
+	TestEqual(TEXT("Reject clears request"),
+		Resolver->GetOutstandingRequest().RequestId, static_cast<int64>(0));
+
+	FCadenceArcActionRequest CompletedRequest;
+	ResolveAndExpect(*this, Resolver, Input_Light,
+		Action_Root, Action_Light01, CompletedRequest, TEXT("Completed request"));
+	StartAndExpect(*this, Resolver, CompletedRequest, TEXT("Completed request"));
+	CompleteAndExpect(*this, Resolver, CompletedRequest, TEXT("Completed request"));
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcValidBranchesTest,
+	"CadenceArc.Resolver.Resolve.ValidBranches",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcValidBranchesTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	Resolver->Initialize(MakeValidGraph());
+
+	ExecuteAndComplete(*this, Resolver, Input_Light, Action_Root, Action_Light01, TEXT("Root + Light"));
+	ExecuteAndComplete(*this, Resolver, Input_Light, Action_Light01, Action_Light02, TEXT("Light01 + Light"));
+	ExecuteAndComplete(*this, Resolver, Input_Heavy, Action_Light02, Action_Finisher02, TEXT("Light02 + Heavy"));
+
+	TestTrue(TEXT("Reset before mixed branch succeeds"), Resolver->Reset());
+	ExecuteAndComplete(*this, Resolver, Input_Light, Action_Root, Action_Light01, TEXT("Root + Light after reset"));
+	ExecuteAndComplete(*this, Resolver, Input_Heavy, Action_Light01, Action_Finisher01, TEXT("Light01 + Heavy"));
+
+	TestTrue(TEXT("Reset before heavy branch succeeds"), Resolver->Reset());
+	ExecuteAndComplete(*this, Resolver, Input_Heavy, Action_Root, Action_Heavy01, TEXT("Root + Heavy"));
+	ExecuteAndComplete(*this, Resolver, Input_Heavy, Action_Heavy01, Action_Heavy02, TEXT("Heavy01 + Heavy"));
+	ExecuteAndComplete(*this, Resolver, Input_Heavy, Action_Heavy02, Action_Finisher03, TEXT("Heavy02 + Heavy"));
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcResolutionFailuresTest,
+	"CadenceArc.Resolver.Resolve.FailuresPreserveState",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcResolutionFailuresTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	ResolveFailureAndExpect(*this, Resolver, Input_Light,
+		ECadenceArcResolverTransitionResult::NotInitialized, FGameplayTag::EmptyTag,
+		ECadenceArcResolverState::Uninitialized, 0, TEXT("Resolve before initialization"));
+	Resolver->Initialize(MakeValidGraph());
+	ResolveFailureAndExpect(*this, Resolver, FGameplayTag::EmptyTag,
+		ECadenceArcResolverTransitionResult::InvalidInputTag, Action_Root,
+		ECadenceArcResolverState::Ready, 0, TEXT("Resolve invalid input"));
+	ExecuteAndComplete(*this, Resolver, Input_Heavy, Action_Root, Action_Heavy01, TEXT("Root + Heavy"));
+	ResolveFailureAndExpect(*this, Resolver, Input_Light,
+		ECadenceArcResolverTransitionResult::NoMatchingTransition, Action_Heavy01,
+		ECadenceArcResolverState::Ready, 0, TEXT("Heavy01 + Light"));
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcBrokenGraphTest,
+	"CadenceArc.Resolver.Resolve.BrokenGraph",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcBrokenGraphTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
 	UCadenceArcGraph* Graph = MakeValidGraph();
 	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	Resolver->Initialize(Graph);
+	Graph->Nodes.RemoveAll([](const FCadenceArcNode& Node) { return Node.ActionTag == Action_Root; });
+	ResolveFailureAndExpect(*this, Resolver, Input_Light,
+		ECadenceArcResolverTransitionResult::CurrentNodeNotFound, Action_Root,
+		ECadenceArcResolverState::Ready, 0, TEXT("Missing current node"));
 
-	TestInitResult(*this, TEXT("Valid graph initializes"),
-		Resolver->Initialize(Graph), ECadenceArcResolverInitResult::Success);
-	TestTrue(TEXT("Resolver reports initialized"), Resolver->IsInitialized());
-	TestTag(*this, TEXT("Current action starts at entry"),
-		Resolver->GetCurrentActionTag(), Action_Root);
+	Graph = MakeValidGraph();
+	Resolver->Initialize(Graph);
+	Graph->Nodes.RemoveAll([](const FCadenceArcNode& Node) { return Node.ActionTag == Action_Light01; });
+	ResolveFailureAndExpect(*this, Resolver, Input_Light,
+		ECadenceArcResolverTransitionResult::TargetNodeNotFound, Action_Root,
+		ECadenceArcResolverState::Ready, 0, TEXT("Missing target node"));
 	return !HasAnyErrors();
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcInitializeInvalidGraphTest,
-	"CadenceArc.Resolver.Initialize.InvalidGraph",
+	FCadenceArcHandshakeErrorsTest,
+	"CadenceArc.Resolver.Handshake.ErrorsPreserveState",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FCadenceArcInitializeInvalidGraphTest::RunTest(const FString& Parameters)
+bool FCadenceArcHandshakeErrorsTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
 	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	TestHandshake(*this, TEXT("Callback before initialization is rejected"),
+		Resolver->NotifyActionStarted(1), ECadenceArcHandshakeResult::NotInitialized);
+	Resolver->Initialize(MakeValidGraph());
+	TestHandshake(*this, TEXT("Zero request ID is rejected"),
+		Resolver->NotifyActionStarted(0), ECadenceArcHandshakeResult::InvalidRequestId);
+	TestHandshake(*this, TEXT("Started in Ready is rejected"),
+		Resolver->NotifyActionStarted(1), ECadenceArcHandshakeResult::UnexpectedState);
 
-	TestInitResult(*this, TEXT("Null graph is rejected"),
-		Resolver->Initialize(nullptr), ECadenceArcResolverInitResult::InvalidGraph);
-	TestFalse(TEXT("Resolver remains uninitialized"), Resolver->IsInitialized());
-	TestFalse(TEXT("Current action remains invalid"), Resolver->GetCurrentActionTag().IsValid());
-	return !HasAnyErrors();
-}
+	FCadenceArcActionRequest Request;
+	ResolveAndExpect(*this, Resolver, Input_Light,
+		Action_Root, Action_Light01, Request, TEXT("Handshake request"));
+	TestHandshake(*this, TEXT("Wrong pending ID is rejected"),
+		Resolver->NotifyActionStarted(Request.RequestId + 1),
+		ECadenceArcHandshakeResult::RequestIdMismatch);
+	TestState(*this, TEXT("Wrong ID preserves AwaitingStart"),
+		Resolver->GetState(), ECadenceArcResolverState::AwaitingStart);
+	TestTag(*this, TEXT("Wrong ID preserves source"), Resolver->GetCurrentActionTag(), Action_Root);
+	TestEqual(TEXT("Wrong ID preserves request"),
+		Resolver->GetOutstandingRequest().RequestId, Request.RequestId);
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcInitializeInvalidEntryTagTest,
-	"CadenceArc.Resolver.Initialize.InvalidEntryActionTag",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCadenceArcInitializeInvalidEntryTagTest::RunTest(const FString& Parameters)
-{
-	using namespace CadenceArc::Tests;
-	UCadenceArcGraph* Graph = NewObject<UCadenceArcGraph>();
-	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
-
-	TestInitResult(*this, TEXT("Invalid entry action tag is rejected"),
-		Resolver->Initialize(Graph), ECadenceArcResolverInitResult::InvalidEntryActionTag);
-	TestFalse(TEXT("Resolver remains uninitialized"), Resolver->IsInitialized());
-	return !HasAnyErrors();
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcInitializeEntryNodeNotFoundTest,
-	"CadenceArc.Resolver.Initialize.EntryNodeNotFound",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCadenceArcInitializeEntryNodeNotFoundTest::RunTest(const FString& Parameters)
-{
-	using namespace CadenceArc::Tests;
-	UCadenceArcGraph* Graph = NewObject<UCadenceArcGraph>();
-	Graph->EntryActionTag = Action_Root;
-	AddNode(Graph, Action_Light01);
-	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
-
-	TestInitResult(*this, TEXT("Missing entry node is rejected"),
-		Resolver->Initialize(Graph), ECadenceArcResolverInitResult::EntryNodeNotFound);
-	TestFalse(TEXT("Resolver remains uninitialized"), Resolver->IsInitialized());
-	return !HasAnyErrors();
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcInitializeFailurePreservesStateTest,
-	"CadenceArc.Resolver.Initialize.FailurePreservesState",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCadenceArcInitializeFailurePreservesStateTest::RunTest(const FString& Parameters)
-{
-	using namespace CadenceArc::Tests;
-	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
-	TestInitResult(*this, TEXT("Initial valid graph initializes"),
-		Resolver->Initialize(MakeValidGraph()), ECadenceArcResolverInitResult::Success);
-	ResolveAndExpect(*this, Resolver, Input_Light, Action_Light01, TEXT("Root + Light"));
-
-	TestInitResult(*this, TEXT("Invalid replacement graph is rejected"),
-		Resolver->Initialize(nullptr), ECadenceArcResolverInitResult::InvalidGraph);
-	TestTrue(TEXT("Resolver remains initialized after rejected replacement"), Resolver->IsInitialized());
-	TestTag(*this, TEXT("Rejected replacement preserves current action"),
+	StartAndExpect(*this, Resolver, Request, TEXT("Handshake request"));
+	TestHandshake(*this, TEXT("Stale completion ID is rejected"),
+		Resolver->NotifyActionCompleted(Request.RequestId + 1),
+		ECadenceArcHandshakeResult::RequestIdMismatch);
+	TestHandshake(*this, TEXT("Reject while Executing is rejected"),
+		Resolver->NotifyActionRejected(Request.RequestId),
+		ECadenceArcHandshakeResult::UnexpectedState);
+	TestState(*this, TEXT("Invalid callbacks preserve Executing"),
+		Resolver->GetState(), ECadenceArcResolverState::Executing);
+	TestTag(*this, TEXT("Invalid callbacks preserve committed action"),
 		Resolver->GetCurrentActionTag(), Action_Light01);
 	return !HasAnyErrors();
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcResolveValidBranchesTest,
-	"CadenceArc.Resolver.Resolve.ValidBranches",
+	FCadenceArcCancelInterruptTest,
+	"CadenceArc.Resolver.Handshake.CancelAndInterrupt",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FCadenceArcResolveValidBranchesTest::RunTest(const FString& Parameters)
+bool FCadenceArcCancelInterruptTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
 	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
-	TestInitResult(*this, TEXT("Graph initializes"),
-		Resolver->Initialize(MakeValidGraph()), ECadenceArcResolverInitResult::Success);
+	Resolver->Initialize(MakeValidGraph());
 
-	ResolveAndExpect(*this, Resolver, Input_Light, Action_Light01, TEXT("Root + Light"));
-	ResolveAndExpect(*this, Resolver, Input_Light, Action_Light02, TEXT("Light01 + Light"));
-	ResolveAndExpect(*this, Resolver, Input_Heavy, Action_Finisher02, TEXT("Light02 + Heavy"));
+	FCadenceArcActionRequest CancelledRequest;
+	ResolveAndExpect(*this, Resolver, Input_Light,
+		Action_Root, Action_Light01, CancelledRequest, TEXT("Cancelled request"));
+	StartAndExpect(*this, Resolver, CancelledRequest, TEXT("Cancelled request"));
+	TestHandshake(*this, TEXT("Cancel succeeds"),
+		Resolver->NotifyActionCancelled(CancelledRequest.RequestId),
+		ECadenceArcHandshakeResult::Success);
+	TestState(*this, TEXT("Cancel returns Ready"),
+		Resolver->GetState(), ECadenceArcResolverState::Ready);
+	TestTag(*this, TEXT("Cancel resets entry"), Resolver->GetCurrentActionTag(), Action_Root);
 
-	TestTrue(TEXT("Reset before mixed branch succeeds"), Resolver->Reset());
-	ResolveAndExpect(*this, Resolver, Input_Light, Action_Light01, TEXT("Root + Light after reset"));
-	ResolveAndExpect(*this, Resolver, Input_Heavy, Action_Finisher01, TEXT("Light01 + Heavy"));
-
-	TestTrue(TEXT("Reset before heavy branch succeeds"), Resolver->Reset());
-	ResolveAndExpect(*this, Resolver, Input_Heavy, Action_Heavy01, TEXT("Root + Heavy"));
-	ResolveAndExpect(*this, Resolver, Input_Heavy, Action_Heavy02, TEXT("Heavy01 + Heavy"));
-	ResolveAndExpect(*this, Resolver, Input_Heavy, Action_Finisher03, TEXT("Heavy02 + Heavy"));
+	FCadenceArcActionRequest InterruptedRequest;
+	ResolveAndExpect(*this, Resolver, Input_Heavy,
+		Action_Root, Action_Heavy01, InterruptedRequest, TEXT("Interrupted request"));
+	StartAndExpect(*this, Resolver, InterruptedRequest, TEXT("Interrupted request"));
+	TestHandshake(*this, TEXT("Interrupt succeeds"),
+		Resolver->NotifyActionInterrupted(InterruptedRequest.RequestId),
+		ECadenceArcHandshakeResult::Success);
+	TestState(*this, TEXT("Interrupt returns Ready"),
+		Resolver->GetState(), ECadenceArcResolverState::Ready);
+	TestTag(*this, TEXT("Interrupt resets entry"), Resolver->GetCurrentActionTag(), Action_Root);
+	TestEqual(TEXT("Interrupt clears request"),
+		Resolver->GetOutstandingRequest().RequestId, static_cast<int64>(0));
 	return !HasAnyErrors();
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcResolveBasicFailuresTest,
-	"CadenceArc.Resolver.Resolve.BasicFailures",
+	FCadenceArcResetBusyTest,
+	"CadenceArc.Resolver.State.ResetAndBusyInitialize",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FCadenceArcResolveBasicFailuresTest::RunTest(const FString& Parameters)
-{
-	using namespace CadenceArc::Tests;
-	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
-
-	ResolveFailureAndExpectUnchangedState(
-		*this, Resolver, Input_Light, ECadenceArcResolverTransitionResult::NotInitialized,
-		FGameplayTag::EmptyTag, TEXT("Resolve before initialization"));
-
-	TestInitResult(*this, TEXT("Graph initializes"),
-		Resolver->Initialize(MakeValidGraph()), ECadenceArcResolverInitResult::Success);
-	ResolveFailureAndExpectUnchangedState(
-		*this, Resolver, FGameplayTag::EmptyTag, ECadenceArcResolverTransitionResult::InvalidInputTag,
-		Action_Root, TEXT("Resolve invalid input"));
-
-	ResolveAndExpect(*this, Resolver, Input_Heavy, Action_Heavy01, TEXT("Root + Heavy"));
-	ResolveFailureAndExpectUnchangedState(
-		*this, Resolver, Input_Light, ECadenceArcResolverTransitionResult::NoMatchingTransition,
-		Action_Heavy01, TEXT("Heavy01 + Light"));
-	return !HasAnyErrors();
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcResolveCurrentNodeNotFoundTest,
-	"CadenceArc.Resolver.Resolve.CurrentNodeNotFound",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCadenceArcResolveCurrentNodeNotFoundTest::RunTest(const FString& Parameters)
-{
-	using namespace CadenceArc::Tests;
-	UCadenceArcGraph* Graph = MakeValidGraph();
-	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
-	TestInitResult(*this, TEXT("Graph initializes"),
-		Resolver->Initialize(Graph), ECadenceArcResolverInitResult::Success);
-
-	Graph->Nodes.RemoveAll([](const FCadenceArcNode& Node)
-	{
-		return Node.ActionTag == Action_Root;
-	});
-	ResolveFailureAndExpectUnchangedState(
-		*this, Resolver, Input_Light, ECadenceArcResolverTransitionResult::CurrentNodeNotFound,
-		Action_Root, TEXT("Resolve after current node removal"));
-	return !HasAnyErrors();
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcResolveTargetNodeNotFoundTest,
-	"CadenceArc.Resolver.Resolve.TargetNodeNotFound",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCadenceArcResolveTargetNodeNotFoundTest::RunTest(const FString& Parameters)
-{
-	using namespace CadenceArc::Tests;
-	UCadenceArcGraph* Graph = MakeValidGraph();
-	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
-	TestInitResult(*this, TEXT("Graph initializes"),
-		Resolver->Initialize(Graph), ECadenceArcResolverInitResult::Success);
-
-	Graph->Nodes.RemoveAll([](const FCadenceArcNode& Node)
-	{
-		return Node.ActionTag == Action_Light01;
-	});
-	ResolveFailureAndExpectUnchangedState(
-		*this, Resolver, Input_Light, ECadenceArcResolverTransitionResult::TargetNodeNotFound,
-		Action_Root, TEXT("Resolve dangling target"));
-	return !HasAnyErrors();
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcResetTest,
-	"CadenceArc.Resolver.Reset.Behavior",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCadenceArcResetTest::RunTest(const FString& Parameters)
+bool FCadenceArcResetBusyTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
 	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
 	TestFalse(TEXT("Reset before initialization fails"), Resolver->Reset());
-	TestFalse(TEXT("Failed reset leaves current action invalid"), Resolver->GetCurrentActionTag().IsValid());
+	Resolver->Initialize(MakeValidGraph());
 
-	TestInitResult(*this, TEXT("Graph initializes"),
-		Resolver->Initialize(MakeValidGraph()), ECadenceArcResolverInitResult::Success);
-	ResolveAndExpect(*this, Resolver, Input_Light, Action_Light01, TEXT("Root + Light"));
-	ResolveAndExpect(*this, Resolver, Input_Light, Action_Light02, TEXT("Light01 + Light"));
+	FCadenceArcActionRequest Request;
+	ResolveAndExpect(*this, Resolver, Input_Light,
+		Action_Root, Action_Light01, Request, TEXT("Busy request"));
+	TestFalse(TEXT("Reset while AwaitingStart fails"), Resolver->Reset());
+	TestInit(*this, TEXT("Initialize while AwaitingStart is Busy"),
+		Resolver->Initialize(MakeValidGraph()), ECadenceArcResolverInitResult::Busy);
+	StartAndExpect(*this, Resolver, Request, TEXT("Busy request"));
+	TestFalse(TEXT("Reset while Executing fails"), Resolver->Reset());
+	TestInit(*this, TEXT("Initialize while Executing is Busy"),
+		Resolver->Initialize(MakeValidGraph()), ECadenceArcResolverInitResult::Busy);
+	CompleteAndExpect(*this, Resolver, Request, TEXT("Busy request"));
+	TestTrue(TEXT("Reset while Ready succeeds"), Resolver->Reset());
+	TestTag(*this, TEXT("Ready reset restores entry"), Resolver->GetCurrentActionTag(), Action_Root);
+	return !HasAnyErrors();
+}
 
-	TestTrue(TEXT("Reset after resolution succeeds"), Resolver->Reset());
-	TestTag(*this, TEXT("Reset restores entry action"),
-		Resolver->GetCurrentActionTag(), Action_Root);
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcRequestIdTest,
+	"CadenceArc.Resolver.RequestId.Monotonic",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcRequestIdTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	Resolver->Initialize(MakeValidGraph());
+
+	FCadenceArcActionRequest First;
+	ResolveAndExpect(*this, Resolver, Input_Light,
+		Action_Root, Action_Light01, First, TEXT("First request"));
+	Resolver->NotifyActionRejected(First.RequestId);
+
+	FCadenceArcActionRequest Second;
+	ResolveAndExpect(*this, Resolver, Input_Heavy,
+		Action_Root, Action_Heavy01, Second, TEXT("Second request"));
+	TestTrue(TEXT("ID increases after rejection"), Second.RequestId > First.RequestId);
+	StartAndExpect(*this, Resolver, Second, TEXT("Second request"));
+	CompleteAndExpect(*this, Resolver, Second, TEXT("Second request"));
+
+	Resolver->Reset();
+	Resolver->Initialize(MakeValidGraph());
+	FCadenceArcActionRequest Third;
+	ResolveAndExpect(*this, Resolver, Input_Light,
+		Action_Root, Action_Light01, Third, TEXT("Third request"));
+	TestTrue(TEXT("ID increases across reset and reinitialize"), Third.RequestId > Second.RequestId);
 	return !HasAnyErrors();
 }
 

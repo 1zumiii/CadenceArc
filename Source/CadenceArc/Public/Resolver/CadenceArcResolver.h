@@ -22,6 +22,22 @@ private:
 	TObjectPtr<UCadenceArcGraph> Graph;
 	UPROPERTY(Transient)
 	FGameplayTag CurrentActionTag;
+	UPROPERTY(Transient)
+	ECadenceArcResolverState State = ECadenceArcResolverState::Uninitialized;
+	UPROPERTY(Transient)
+	FCadenceArcActionRequest OutstandingRequest;
+	UPROPERTY(Transient)
+	int64 NextRequestId = 1;
+
+	ECadenceArcResolverTransitionResult ResolveInput(
+		const FGameplayTag& InInputTag,
+		FCadenceArcActionRequest& OutActionRequest
+	);
+
+	ECadenceArcHandshakeResult ValidateHandshake(
+		const int64 InRequestId,
+		const ECadenceArcResolverState ExpectedState
+	) const;
 
 public:
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
@@ -30,7 +46,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	ECadenceArcResolverTransitionResult TryResolveInput(
 		const FGameplayTag& InInputTag,
-		FGameplayTag& OutResolvedActionTag
+		FCadenceArcActionRequest& OutActionRequest
 	);
 
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
@@ -41,4 +57,25 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
 	FGameplayTag GetCurrentActionTag() const;
+
+	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
+	ECadenceArcResolverState GetState() const;
+
+	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
+	FCadenceArcActionRequest GetOutstandingRequest() const;
+
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	ECadenceArcHandshakeResult NotifyActionStarted(const int64 InRequestId);
+
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	ECadenceArcHandshakeResult NotifyActionRejected(const int64 InRequestId);
+
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	ECadenceArcHandshakeResult NotifyActionCompleted(const int64 InRequestId);
+
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	ECadenceArcHandshakeResult NotifyActionCancelled(const int64 InRequestId);
+
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	ECadenceArcHandshakeResult NotifyActionInterrupted(const int64 InRequestId);
 };
