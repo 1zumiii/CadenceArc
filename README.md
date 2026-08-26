@@ -1,56 +1,119 @@
 # CadenceArc
 
-CadenceArc is a tag-driven, execution-agnostic branching action framework for Unreal Engine.
+CadenceArc is a tag-driven, execution-agnostic branching action framework for Unreal Engine 5.
 
-It is designed to interpret semantic input tags, traverse a configurable action graph, and emit action tags without depending on the system that eventually executes those actions.
+It resolves semantic input tags through a configurable action graph and emits action requests without knowing how those actions are executed.
 
 ```text
-InputTag -> configurable action graph -> ActionTag
+InputTag
+  -> action graph resolution
+  -> ActionRequest
+  -> external executor
+  -> lifecycle handshake
 ```
 
-## Design Goal
+The name reflects the long-term design: player **cadence** shapes an **arc** through a branching sequence of actions.
 
-CadenceArc separates two responsibilities that are commonly coupled in action-game prototypes:
+## Status
 
-- deciding which action should occur next;
-- executing the selected action.
+CadenceArc is currently at `0.2.0-alpha`. Its runtime API and asset format may change before the first stable release.
 
-The framework owns action-path resolution. Animation, Gameplay Ability System integration, collision handling, and damage processing remain outside the core runtime module.
+The current milestone provides:
 
-The name reflects that design: player **cadence** shapes an **arc** through a branching action graph.
+- configurable action graphs backed by a `UDataAsset`;
+- deterministic `InputTag -> ActionTag` transition resolution;
+- explicit resolver states;
+- request IDs that correlate asynchronous execution callbacks;
+- two-phase resolution and execution commit;
+- rejection, completion, cancellation, and interruption handling;
+- Blueprint-accessible data and resolver APIs;
+- memory-only Unreal Automation Tests.
 
-## Current Milestone
+Input buffering, timing windows, cadence conditions, execution adapters, and networking are not implemented yet.
 
-Phase 1 establishes the smallest complete resolution pipeline:
+## Why the Handshake Exists
 
-- accept a semantic input tag;
-- locate the current node in a configured graph;
-- resolve a matching transition;
-- emit the target action tag;
-- preserve state when resolution fails;
-- reset to the configured entry node.
+Finding a graph transition does not guarantee that an external action can start. A Gameplay Ability, character state machine, or AI executor may reject a request because of resource, state, or timing constraints.
 
-The following features are intentionally deferred:
+CadenceArc therefore separates resolution from commitment:
 
-- input buffering and timing windows;
-- press, release, hold, pause, and directional conditions;
-- action execution confirmation and rejection;
-- cancellation and interruption handling;
-- Gameplay Ability System adapters;
-- networking and prediction;
-- custom graph editor tooling.
+```text
+Resolve input
+  -> produce ActionRequest
+  -> executor accepts or rejects
+  -> Started commits the target node
+  -> terminal callback closes the request
+```
+
+The resolver never assumes that an emitted action was successfully executed.
+
+## Runtime Model
+
+### Graph data
+
+`FCadenceArcTransition`
+
+- `InputTag`
+- `TargetActionTag`
+
+`FCadenceArcNode`
+
+- `ActionTag`
+- `Transitions`
+
+`UCadenceArcGraph`
+
+- `EntryActionTag`
+- `Nodes`
+
+The entry node may use a non-executable root tag that only represents the initial resolver state.
+
+### Action request
+
+`FCadenceArcActionRequest` contains:
+
+- `RequestId` -- a positive, monotonically increasing identifier;
+- `InputTag` -- the semantic input that selected the transition;
+- `SourceActionTag` -- the current node when resolution occurred;
+- `TargetActionTag` -- the candidate action selected by the graph.
+
+Request IDs are not reset by `Reset` or reinitialization, preventing stale asynchronous callbacks from matching a newer request.
+
+### Resolver states
+
+| State | Meaning |
+| --- | --- |
+| `Uninitialized` | No valid graph is loaded. |
+| `Ready` | A new input may be resolved. |
+| `AwaitingStart` | A request exists and awaits acceptance or rejection. |
+| `Executing` | The external executor confirmed that the requested action started. |
+
+Only one outstanding request exists at a time in the current model.
+
+### Lifecycle contract
+
+| Event | Required state | Result |
+| --- | --- | --- |
+| Resolve succeeds | `Ready` | Creates a request and enters `AwaitingStart`; current action is unchanged. |
+| `NotifyActionStarted` | `AwaitingStart` | Commits the target action and enters `Executing`. |
+| `NotifyActionRejected` | `AwaitingStart` | Returns to `Ready`, preserves the source action, and clears the request. |
+| `NotifyActionCompleted` | `Executing` | Returns to `Ready`, preserves the committed action, and clears the request. |
+| `NotifyActionCancelled` | `Executing` | Returns to `Ready`, resets to the entry action, and clears the request. |
+| `NotifyActionInterrupted` | `Executing` | Returns to `Ready`, resets to the entry action, and clears the request. |
+
+Invalid request IDs, stale callbacks, and callbacks received in the wrong state are rejected without mutating resolver state.
 
 ## Architectural Boundary
 
-The core runtime module may depend on Unreal Engine fundamentals and Gameplay Tags, but it must not depend on:
+The core runtime module depends on Unreal Engine fundamentals and Gameplay Tags. It does not depend on:
 
-- `GameplayAbilities`;
+- Gameplay Ability System;
 - animation montages;
-- a specific character or weapon class;
+- a particular character or weapon class;
 - collision or damage systems;
 - the WarriorRPG project.
 
-External systems consume the emitted `ActionTag` and report lifecycle information through adapters added in later milestones.
+External systems consume `TargetActionTag` and report lifecycle events. GAS is one possible adapter, not a requirement of the core framework.
 
 ## Repository Layout
 
@@ -63,18 +126,52 @@ CadenceArc/
     `-- CadenceArc/
         |-- CadenceArc.Build.cs
         |-- Public/
+        |   |-- Graph/
+        |   `-- Resolver/
         `-- Private/
+            |-- Graph/
+            |-- Resolver/
+            `-- Tests/
 ```
 
-CadenceArc is developed and validated through the separate [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox) Unreal Engine project, where this repository is mounted as a Git submodule under `Plugins/CadenceArc`.
+CadenceArc is developed and validated through the separate [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox) project, where this repository is mounted under `Plugins/CadenceArc` as a Git submodule.
+
+## Testing
+
+The current suite contains 11 Unreal Automation Tests covering:
+
+- graph initialization and failure atomicity;
+- action request creation;
+- valid light, heavy, and finisher branches;
+- pending and executing state guards;
+- every lifecycle callback;
+- cancellation and interruption recovery;
+- invalid, stale, and out-of-order callbacks;
+- reset and reinitialization rules;
+- monotonically increasing request IDs.
+
+From a CadenceArcSandbox checkout, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
+```
+
+The runner performs a cold editor build and then runs tests with English Unreal output to avoid localized result-parsing issues in Rider.
+
+## Roadmap
+
+Planned work includes:
+
+1. input buffering and externally controlled timing windows;
+2. press, release, hold, pause, and directional conditions;
+3. transition conditions, priority, and ambiguity validation;
+4. graph data validation and debugging tools;
+5. optional execution adapters, including GAS;
+6. input recording, replay, networking, and prediction research.
 
 ## Requirements
 
 - Unreal Engine 5.7
 - A supported Unreal Engine C++ toolchain
 - Git LFS for binary Unreal assets
-
-## Status
-
-CadenceArc is currently in its initial framework-development stage. APIs, asset formats, and module boundaries may change before the first stable release.
 

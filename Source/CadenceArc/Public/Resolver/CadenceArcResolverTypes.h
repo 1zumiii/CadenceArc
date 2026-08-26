@@ -37,7 +37,7 @@ enum class ECadenceArcResolverState : uint8
 };
 
 UENUM(BlueprintType)
-enum class ECadenceArcHandshakeResult : uint8 
+enum class ECadenceArcHandshakeResult : uint8
 {
 	Success,
 	NotInitialized,
@@ -50,12 +50,16 @@ USTRUCT(BlueprintType)
 struct CADENCEARC_API FCadenceArcActionRequest
 {
 	GENERATED_BODY()
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
 	int64 RequestId = 0;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
 	FGameplayTag InputTag;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
 	FGameplayTag SourceActionTag;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
 	FGameplayTag TargetActionTag;
 };

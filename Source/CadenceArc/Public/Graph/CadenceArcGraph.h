@@ -1,5 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
@@ -8,7 +6,7 @@
 #include "CadenceArcGraph.generated.h"
 
 /**
- * 
+ * Data asset containing the entry action and deterministic tag-driven transitions.
  */
 UCLASS(BlueprintType)
 class CADENCEARC_API UCadenceArcGraph : public UDataAsset
@@ -18,6 +16,7 @@ class CADENCEARC_API UCadenceArcGraph : public UDataAsset
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	FGameplayTag EntryActionTag;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	TArray<FCadenceArcNode> Nodes;
 };

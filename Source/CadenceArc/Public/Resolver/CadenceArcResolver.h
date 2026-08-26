@@ -1,5 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
 #pragma once
 
 #include "CoreMinimal.h"
@@ -9,8 +7,10 @@
 #include "CadenceArcResolver.generated.h"
 
 class UCadenceArcGraph;
+
 /**
- * 
+ * Resolves semantic input tags through a configured action graph and coordinates
+ * action execution through an explicit request/lifecycle handshake.
  */
 UCLASS(BlueprintType)
 class CADENCEARC_API UCadenceArcResolver : public UObject
