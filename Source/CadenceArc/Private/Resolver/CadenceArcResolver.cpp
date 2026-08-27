@@ -25,62 +25,76 @@ ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* 
 	CurrentActionTag = InGraph->EntryActionTag;
 	State = ECadenceArcResolverState::Ready;
 	OutstandingRequest = FCadenceArcActionRequest{};
+	ClearInputBuffer();
 	return ECadenceArcResolverInitResult::Success;
 }
 
-ECadenceArcResolverTransitionResult UCadenceArcResolver::TryResolveInput(
+ECadenceArcInputResult UCadenceArcResolver::SubmitInput(
 	const FGameplayTag& InInputTag,
 	FCadenceArcActionRequest& OutActionRequest
 )
 {
 	OutActionRequest = FCadenceArcActionRequest{};
+	if (State == ECadenceArcResolverState::Uninitialized)
+	{
+		return ECadenceArcInputResult::NotInitialized;
+	}
+
+	if (!InInputTag.IsValid())
+	{
+		return ECadenceArcInputResult::InvalidInputTag;
+	}
+
 	switch (State)
 	{
 	case ECadenceArcResolverState::Ready:
-		break;
+		return ResolveInput(InInputTag, OutActionRequest);
 	case ECadenceArcResolverState::AwaitingStart:
-		return ECadenceArcResolverTransitionResult::RequestPending;
+		return ECadenceArcInputResult::RequestPending;
 	case ECadenceArcResolverState::Executing:
-		return ECadenceArcResolverTransitionResult::ActionExecuting;
-	case ECadenceArcResolverState::Uninitialized:
+		if (bIsBufferWindowOpen)
+		{
+			BufferedInputTag = InInputTag;
+			return ECadenceArcInputResult::Buffered;
+		}
+		return ECadenceArcInputResult::BufferWindowClosed;
 	default:
-		return ECadenceArcResolverTransitionResult::NotInitialized;
+		return ECadenceArcInputResult::NotInitialized;
 	}
-	return ResolveInput(InInputTag, OutActionRequest);
 }
 
-ECadenceArcResolverTransitionResult UCadenceArcResolver::ResolveInput(
+ECadenceArcInputResult UCadenceArcResolver::ResolveInput(
 	const FGameplayTag& InInputTag, FCadenceArcActionRequest& OutActionRequest
 )
 {
 	if (!IsInitialized())
 	{
-		return ECadenceArcResolverTransitionResult::NotInitialized;
+		return ECadenceArcInputResult::NotInitialized;
 	}
 	if (!InInputTag.IsValid())
 	{
-		return ECadenceArcResolverTransitionResult::InvalidInputTag;
+		return ECadenceArcInputResult::InvalidInputTag;
 	}
 	const FCadenceArcNode* CurrentNode = Graph->Nodes.FindByPredicate(
 		[&](const FCadenceArcNode& Node) { return Node.ActionTag == CurrentActionTag; }
 	);
 	if (!CurrentNode)
 	{
-		return ECadenceArcResolverTransitionResult::CurrentNodeNotFound;
+		return ECadenceArcInputResult::CurrentNodeNotFound;
 	}
 	const FCadenceArcTransition* CurrentTransition = CurrentNode->Transitions.FindByPredicate(
 		[&](const FCadenceArcTransition& Transition) { return Transition.InputTag == InInputTag; }
 	);
 	if (!CurrentTransition)
 	{
-		return ECadenceArcResolverTransitionResult::NoMatchingTransition;
+		return ECadenceArcInputResult::NoMatchingTransition;
 	}
 	const FCadenceArcNode* TargetNode = Graph->Nodes.FindByPredicate(
 		[&](const FCadenceArcNode& Node) { return Node.ActionTag == CurrentTransition->TargetActionTag; }
 	);
 	if (!TargetNode)
 	{
-		return ECadenceArcResolverTransitionResult::TargetNodeNotFound;
+		return ECadenceArcInputResult::TargetNodeNotFound;
 	}
 	OutstandingRequest = FCadenceArcActionRequest{
 		NextRequestId++,
@@ -90,7 +104,7 @@ ECadenceArcResolverTransitionResult UCadenceArcResolver::ResolveInput(
 	};
 	OutActionRequest = OutstandingRequest;
 	State = ECadenceArcResolverState::AwaitingStart;
-	return ECadenceArcResolverTransitionResult::Success;
+	return ECadenceArcInputResult::Success;
 }
 
 ECadenceArcHandshakeResult UCadenceArcResolver::ValidateHandshake(
@@ -117,6 +131,24 @@ ECadenceArcHandshakeResult UCadenceArcResolver::ValidateHandshake(
 	return ECadenceArcHandshakeResult::Success;
 }
 
+ECadenceArcHandshakeResult UCadenceArcResolver::SetBufferWindowState(const int64 InRequestId, const bool bShouldOpen)
+{
+	const ECadenceArcHandshakeResult HandshakeResult = ValidateHandshake(
+		InRequestId, ECadenceArcResolverState::Executing);
+	if (HandshakeResult != ECadenceArcHandshakeResult::Success)
+	{
+		return HandshakeResult;
+	}
+	bIsBufferWindowOpen = bShouldOpen;
+	return ECadenceArcHandshakeResult::Success;
+}
+
+void UCadenceArcResolver::ClearInputBuffer()
+{
+	bIsBufferWindowOpen = false;
+	BufferedInputTag = FGameplayTag::EmptyTag;
+}
+
 
 bool UCadenceArcResolver::Reset()
 {
@@ -131,6 +163,7 @@ bool UCadenceArcResolver::Reset()
 	case ECadenceArcResolverState::Ready:
 		CurrentActionTag = Graph->EntryActionTag;
 		OutstandingRequest = FCadenceArcActionRequest{};
+		ClearInputBuffer();
 		break;
 	case ECadenceArcResolverState::AwaitingStart:
 	case ECadenceArcResolverState::Executing:
@@ -145,21 +178,6 @@ bool UCadenceArcResolver::IsInitialized() const
 	return IsValid(Graph) && State != ECadenceArcResolverState::Uninitialized;
 }
 
-FGameplayTag UCadenceArcResolver::GetCurrentActionTag() const
-{
-	return CurrentActionTag;
-}
-
-ECadenceArcResolverState UCadenceArcResolver::GetState() const
-{
-	return State;
-}
-
-FCadenceArcActionRequest UCadenceArcResolver::GetOutstandingRequest() const
-{
-	return OutstandingRequest;
-}
-
 ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionStarted(const int64 InRequestId)
 {
 	const ECadenceArcHandshakeResult HandshakeResult = ValidateHandshake(
@@ -170,6 +188,7 @@ ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionStarted(const int64 
 	}
 	CurrentActionTag = OutstandingRequest.TargetActionTag;
 	State = ECadenceArcResolverState::Executing;
+	ClearInputBuffer();
 	return ECadenceArcHandshakeResult::Success;
 }
 
@@ -183,20 +202,56 @@ ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionRejected(const int64
 	}
 	State = ECadenceArcResolverState::Ready;
 	OutstandingRequest = FCadenceArcActionRequest{};
+	ClearInputBuffer();
 	return ECadenceArcHandshakeResult::Success;
 }
 
-ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionCompleted(const int64 InRequestId)
+FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(const int64 InRequestId)
 {
+	FCadenceArcActionCompletionOutcome Outcome;
+	const FGameplayTag InputToConsume = GetBufferedInputTag();
 	const ECadenceArcHandshakeResult HandshakeResult = ValidateHandshake(
 		InRequestId, ECadenceArcResolverState::Executing);
 	if (HandshakeResult != ECadenceArcHandshakeResult::Success)
 	{
-		return HandshakeResult;
+		Outcome.HandshakeResult = HandshakeResult;
+		return Outcome;
 	}
 	State = ECadenceArcResolverState::Ready;
 	OutstandingRequest = FCadenceArcActionRequest{};
-	return ECadenceArcHandshakeResult::Success;
+	ClearInputBuffer();
+	if (!InputToConsume.IsValid())
+	{
+		Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::NoBufferedInput;
+		Outcome.HandshakeResult = ECadenceArcHandshakeResult::Success;
+		return Outcome;
+	}
+	const ECadenceArcInputResult Result = ResolveInput(InputToConsume, Outcome.NextActionRequest);
+	if (Result == ECadenceArcInputResult::Success)
+	{
+		Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::Resolved;
+		State = ECadenceArcResolverState::AwaitingStart;
+	}
+	else
+	{
+		switch (Result)
+		{
+		case ECadenceArcInputResult::CurrentNodeNotFound:
+			Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::CurrentNodeNotFound;
+			break;
+		case ECadenceArcInputResult::NoMatchingTransition:
+			Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::NoMatchingTransition;
+			break;
+		case ECadenceArcInputResult::TargetNodeNotFound:
+			Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::TargetNodeNotFound;
+			break;
+		default:
+			Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::UnexpectedResult;
+			break;
+		}
+	}
+	Outcome.HandshakeResult = ECadenceArcHandshakeResult::Success;
+	return Outcome;
 }
 
 ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionCancelled(const int64 InRequestId)
@@ -210,6 +265,7 @@ ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionCancelled(const int6
 	State = ECadenceArcResolverState::Ready;
 	OutstandingRequest = FCadenceArcActionRequest{};
 	CurrentActionTag = Graph->EntryActionTag;
+	ClearInputBuffer();
 	return ECadenceArcHandshakeResult::Success;
 }
 
@@ -224,5 +280,16 @@ ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionInterrupted(const in
 	State = ECadenceArcResolverState::Ready;
 	OutstandingRequest = FCadenceArcActionRequest{};
 	CurrentActionTag = Graph->EntryActionTag;
+	ClearInputBuffer();
 	return ECadenceArcHandshakeResult::Success;
+}
+
+ECadenceArcHandshakeResult UCadenceArcResolver::OpenBufferWindow(const int64 InRequestId)
+{
+	return SetBufferWindowState(InRequestId, true);
+}
+
+ECadenceArcHandshakeResult UCadenceArcResolver::CloseBufferWindow(const int64 InRequestId)
+{
+	return SetBufferWindowState(InRequestId, false);
 }

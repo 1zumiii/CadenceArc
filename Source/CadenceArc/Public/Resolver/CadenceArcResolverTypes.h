@@ -15,7 +15,7 @@ enum class ECadenceArcResolverInitResult : uint8
 };
 
 UENUM(BlueprintType)
-enum class ECadenceArcResolverTransitionResult : uint8
+enum class ECadenceArcInputResult : uint8
 {
 	Success,
 	NotInitialized,
@@ -24,7 +24,8 @@ enum class ECadenceArcResolverTransitionResult : uint8
 	NoMatchingTransition,
 	TargetNodeNotFound,
 	RequestPending,
-	ActionExecuting
+	Buffered,
+	BufferWindowClosed
 };
 
 UENUM(BlueprintType)
@@ -62,4 +63,31 @@ struct CADENCEARC_API FCadenceArcActionRequest
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
 	FGameplayTag TargetActionTag;
+};
+
+UENUM(BlueprintType)
+enum class ECadenceArcBufferConsumeResult : uint8
+{
+	NotAttempted,
+	NoBufferedInput,
+	Resolved,
+	CurrentNodeNotFound,
+	NoMatchingTransition,
+	TargetNodeNotFound,
+	UnexpectedResult
+};
+
+USTRUCT(BlueprintType)
+struct CADENCEARC_API FCadenceArcActionCompletionOutcome
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	ECadenceArcHandshakeResult HandshakeResult = ECadenceArcHandshakeResult::NotInitialized;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	ECadenceArcBufferConsumeResult BufferConsumeResult = ECadenceArcBufferConsumeResult::NotAttempted;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	FCadenceArcActionRequest NextActionRequest;
 };

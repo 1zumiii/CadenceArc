@@ -29,7 +29,15 @@ private:
 	UPROPERTY(Transient)
 	int64 NextRequestId = 1;
 
-	ECadenceArcResolverTransitionResult ResolveInput(
+
+	// Input Buffering
+	UPROPERTY(Transient)
+	bool bIsBufferWindowOpen = false;
+	UPROPERTY(Transient)
+	FGameplayTag BufferedInputTag;
+
+	// Helper functions
+	ECadenceArcInputResult ResolveInput(
 		const FGameplayTag& InInputTag,
 		FCadenceArcActionRequest& OutActionRequest
 	);
@@ -39,12 +47,19 @@ private:
 		const ECadenceArcResolverState ExpectedState
 	) const;
 
+	ECadenceArcHandshakeResult SetBufferWindowState(
+		const int64 InRequestId,
+		const bool bShouldOpen
+	);
+	
+	void ClearInputBuffer();
+
 public:
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	ECadenceArcResolverInitResult Initialize(UCadenceArcGraph* InGraph);
 
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
-	ECadenceArcResolverTransitionResult TryResolveInput(
+	ECadenceArcInputResult SubmitInput(
 		const FGameplayTag& InInputTag,
 		FCadenceArcActionRequest& OutActionRequest
 	);
@@ -55,15 +70,23 @@ public:
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
 	bool IsInitialized() const;
 
+	/// Getters
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
-	FGameplayTag GetCurrentActionTag() const;
+	FGameplayTag GetCurrentActionTag() const { return CurrentActionTag; }
 
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
-	ECadenceArcResolverState GetState() const;
+	ECadenceArcResolverState GetState() const { return State; }
 
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
-	FCadenceArcActionRequest GetOutstandingRequest() const;
+	FCadenceArcActionRequest GetOutstandingRequest() const { return OutstandingRequest; }
 
+	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
+	bool IsBufferWindowOpen() const { return bIsBufferWindowOpen; }
+
+	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
+	FGameplayTag GetBufferedInputTag() const { return BufferedInputTag; }
+
+	/// Handshake Notifications
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	ECadenceArcHandshakeResult NotifyActionStarted(const int64 InRequestId);
 
@@ -71,11 +94,18 @@ public:
 	ECadenceArcHandshakeResult NotifyActionRejected(const int64 InRequestId);
 
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
-	ECadenceArcHandshakeResult NotifyActionCompleted(const int64 InRequestId);
+	FCadenceArcActionCompletionOutcome NotifyActionCompleted(const int64 InRequestId);
 
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	ECadenceArcHandshakeResult NotifyActionCancelled(const int64 InRequestId);
 
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	ECadenceArcHandshakeResult NotifyActionInterrupted(const int64 InRequestId);
+
+	// Buffering
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	ECadenceArcHandshakeResult OpenBufferWindow(const int64 InRequestId);
+
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	ECadenceArcHandshakeResult CloseBufferWindow(const int64 InRequestId);
 };

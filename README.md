@@ -6,17 +6,19 @@ It resolves semantic input tags through a configurable action graph and emits ac
 
 ```text
 InputTag
-  -> action graph resolution
+  -> SubmitInput
+  -> resolve now or buffer during execution
   -> ActionRequest
   -> external executor
   -> lifecycle handshake
+  -> consume buffered input on completion
 ```
 
 The name reflects the long-term design: player **cadence** shapes an **arc** through a branching sequence of actions.
 
 ## Status
 
-CadenceArc is currently at `0.2.0-alpha`. Its runtime API and asset format may change before the first stable release.
+CadenceArc is currently at `0.3.0-alpha`. Its runtime API and asset format may change before the first stable release.
 
 The current milestone provides:
 
@@ -26,10 +28,14 @@ The current milestone provides:
 - request IDs that correlate asynchronous execution callbacks;
 - two-phase resolution and execution commit;
 - rejection, completion, cancellation, and interruption handling;
+- a RequestId-protected input window;
+- a single-slot, Last Input Wins input buffer;
+- automatic buffered-input resolution when an action completes;
+- structured completion outcomes containing handshake and buffer-consumption results;
 - Blueprint-accessible data and resolver APIs;
 - memory-only Unreal Automation Tests.
 
-Input buffering, timing windows, cadence conditions, execution adapters, and networking are not implemented yet.
+Input timestamps, hold and release phases, cadence conditions, execution adapters, and networking are not implemented yet.
 
 ## Why the Handshake Exists
 
@@ -46,6 +52,27 @@ Resolve input
 ```
 
 The resolver never assumes that an emitted action was successfully executed.
+
+## Input Buffering
+
+`SubmitInput` has state-dependent behavior:
+
+| Resolver state | Buffer window | Result |
+| --- | --- | --- |
+| `Ready` | Irrelevant | Resolves the graph immediately and may emit an `ActionRequest`. |
+| `AwaitingStart` | Closed | Returns `RequestPending` without changing state. |
+| `Executing` | Open | Stores the input and returns `Buffered`; a later valid input overwrites it. |
+| `Executing` | Closed | Returns `BufferWindowClosed` without changing the stored input. |
+
+The external executor controls the timing window with `OpenBufferWindow(RequestId)` and `CloseBufferWindow(RequestId)`. Both calls require the current executing request ID, making stale animation or state-machine notifications harmless. Closing a window freezes the stored input rather than clearing it.
+
+When the current action completes, `NotifyActionCompleted` returns an `FCadenceArcActionCompletionOutcome`:
+
+- `HandshakeResult` reports whether the completion callback matched the active request;
+- `BufferConsumeResult` reports whether a buffered input was absent, resolved, or failed graph validation;
+- `NextActionRequest` contains the next request when consumption succeeds.
+
+A successfully consumed input moves the resolver directly to `AwaitingStart`. The next target action is still not committed until the external executor reports `NotifyActionStarted`.
 
 ## Runtime Model
 
@@ -94,10 +121,10 @@ Only one outstanding request exists at a time in the current model.
 
 | Event | Required state | Result |
 | --- | --- | --- |
-| Resolve succeeds | `Ready` | Creates a request and enters `AwaitingStart`; current action is unchanged. |
+| `SubmitInput` resolves | `Ready` | Creates a request and enters `AwaitingStart`; current action is unchanged. |
 | `NotifyActionStarted` | `AwaitingStart` | Commits the target action and enters `Executing`. |
 | `NotifyActionRejected` | `AwaitingStart` | Returns to `Ready`, preserves the source action, and clears the request. |
-| `NotifyActionCompleted` | `Executing` | Returns to `Ready`, preserves the committed action, and clears the request. |
+| `NotifyActionCompleted` | `Executing` | Preserves the committed action, consumes the buffer, then enters `Ready` or emits the next request and enters `AwaitingStart`. |
 | `NotifyActionCancelled` | `Executing` | Returns to `Ready`, resets to the entry action, and clears the request. |
 | `NotifyActionInterrupted` | `Executing` | Returns to `Ready`, resets to the entry action, and clears the request. |
 
@@ -138,7 +165,7 @@ CadenceArc is developed and validated through the separate [CadenceArcSandbox](h
 
 ## Testing
 
-The current suite contains 11 Unreal Automation Tests covering:
+The current suite contains 15 Unreal Automation Tests covering:
 
 - graph initialization and failure atomicity;
 - action request creation;
@@ -147,6 +174,11 @@ The current suite contains 11 Unreal Automation Tests covering:
 - every lifecycle callback;
 - cancellation and interruption recovery;
 - invalid, stale, and out-of-order callbacks;
+- buffer-window RequestId validation and idempotent open/close behavior;
+- single-slot buffering and Last Input Wins replacement;
+- buffered completion producing the correct next action request;
+- no-match and broken-graph failures during buffer consumption;
+- buffer cleanup after completion, cancellation, and interruption;
 - reset and reinitialization rules;
 - monotonically increasing request IDs.
 
@@ -162,8 +194,8 @@ The runner performs a cold editor build and then runs tests with English Unreal 
 
 Planned work includes:
 
-1. input buffering and externally controlled timing windows;
-2. press, release, hold, pause, and directional conditions;
+1. press, release, hold, pause, and directional conditions;
+2. injectable time semantics and input expiry;
 3. transition conditions, priority, and ambiguity validation;
 4. graph data validation and debugging tools;
 5. optional execution adapters, including GAS;
@@ -174,4 +206,3 @@ Planned work includes:
 - Unreal Engine 5.7
 - A supported Unreal Engine C++ toolchain
 - Git LFS for binary Unreal assets
-
