@@ -5,6 +5,8 @@
 #include "Graph/CadenceArcGraph.h"
 #include "NativeGameplayTags.h"
 #include "Resolver/CadenceArcResolver.h"
+#include <limits>
+#include <type_traits>
 
 namespace CadenceArc::Tests
 {
@@ -18,6 +20,49 @@ namespace CadenceArc::Tests
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(Action_Finisher03, "CadenceArc.Automation.Action.Finisher03");
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(Input_Light, "CadenceArc.Automation.Input.Light");
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(Input_Heavy, "CadenceArc.Automation.Input.Heavy");
+
+	// Keep general regression setup independent of the dedicated zero-time contract test.
+	static constexpr double RegressionTimestampSeconds = 0.125;
+
+	static FCadenceArcInputEvent MakeInput(
+		const FGameplayTag& InputTag, const double TimestampSeconds = RegressionTimestampSeconds)
+	{
+		FCadenceArcInputEvent Event;
+		Event.InputTag = InputTag;
+		Event.TimestampSeconds = TimestampSeconds;
+		return Event;
+	}
+
+	// During the Phase 5 API migration, fail explicitly instead of invoking the old
+	// one-argument completion method, which dereferences a nonexistent test World.
+	// No legacy-clock fallback is allowed: these tests must inject completion time.
+	template <typename TResolver = UCadenceArcResolver>
+	static bool RequireExplicitCompletionTime(FAutomationTestBase& Test)
+	{
+		constexpr bool bAcceptsTime = std::is_invocable_r_v<FCadenceArcActionCompletionOutcome,
+			decltype(&TResolver::NotifyActionCompleted), TResolver*, int64, double>;
+		if constexpr (!bAcceptsTime)
+		{
+			Test.AddError(TEXT("Phase 5 API missing: NotifyActionCompleted must accept (int64 RequestId, double CompletionTimestampSeconds). Completion behavior was not executed; no World-clock fallback is permitted."));
+		}
+		return bAcceptsTime;
+	}
+
+	template <typename TResolver>
+	static FCadenceArcActionCompletionOutcome CompleteAt(
+		FAutomationTestBase& Test, TResolver* Resolver, const int64 RequestId, const double TimestampSeconds)
+	{
+		if constexpr (std::is_invocable_r_v<FCadenceArcActionCompletionOutcome,
+			decltype(&TResolver::NotifyActionCompleted), TResolver*, int64, double>)
+		{
+			return Resolver->NotifyActionCompleted(RequestId, TimestampSeconds);
+		}
+		else
+		{
+			RequireExplicitCompletionTime<TResolver>(Test);
+			return {};
+		}
+	}
 
 	static FCadenceArcNode& AddNode(UCadenceArcGraph* Graph, const FGameplayTag& ActionTag)
 	{
@@ -130,7 +175,7 @@ namespace CadenceArc::Tests
 	{
 		bool bPassed = TestTransition(
 			Test, *FString::Printf(TEXT("%s resolves"), Step),
-			Resolver->SubmitInput(InputTag, OutRequest),
+			Resolver->SubmitInput(MakeInput(InputTag), OutRequest),
 			ECadenceArcInputResult::Success);
 		bPassed &= Test.TestTrue(
 			*FString::Printf(TEXT("%s receives a positive request ID"), Step),
@@ -178,7 +223,7 @@ namespace CadenceArc::Tests
 		const TCHAR* Step)
 	{
 		const FCadenceArcActionCompletionOutcome Outcome =
-			Resolver->NotifyActionCompleted(Request.RequestId);
+			CompleteAt(Test, Resolver, Request.RequestId, RegressionTimestampSeconds);
 		bool bPassed = TestHandshake(
 			Test, *FString::Printf(TEXT("%s completes"), Step),
 			Outcome.HandshakeResult,
@@ -230,7 +275,7 @@ namespace CadenceArc::Tests
 		Request.TargetActionTag = Action_Finisher03;
 		bool bPassed = TestTransition(
 			Test, *FString::Printf(TEXT("%s returns expected failure"), Step),
-			Resolver->SubmitInput(InputTag, Request), ExpectedResult);
+			Resolver->SubmitInput(MakeInput(InputTag), Request), ExpectedResult);
 		bPassed &= Test.TestEqual(*FString::Printf(TEXT("%s clears output ID"), Step),
 			Request.RequestId, static_cast<int64>(0));
 		bPassed &= Test.TestFalse(*FString::Printf(TEXT("%s clears output target"), Step),
@@ -384,7 +429,7 @@ bool FCadenceArcSingleInputBufferTest::RunTest(const FString& Parameters)
 	FCadenceArcActionRequest OutputRequest;
 	OutputRequest.RequestId = 999;
 	TestTransition(*this, TEXT("Input outside window is rejected"),
-		Resolver->SubmitInput(Input_Light, OutputRequest),
+		Resolver->SubmitInput(MakeInput(Input_Light), OutputRequest),
 		ECadenceArcInputResult::BufferWindowClosed);
 	TestEqual(TEXT("Rejected input clears output request"),
 		OutputRequest.RequestId, static_cast<int64>(0));
@@ -393,7 +438,7 @@ bool FCadenceArcSingleInputBufferTest::RunTest(const FString& Parameters)
 
 	Resolver->OpenBufferWindow(ExecutingRequest.RequestId);
 	TestTransition(*this, TEXT("First input is buffered"),
-		Resolver->SubmitInput(Input_Light, OutputRequest),
+		Resolver->SubmitInput(MakeInput(Input_Light), OutputRequest),
 		ECadenceArcInputResult::Buffered);
 	TestTag(*this, TEXT("Buffer stores first input"),
 		Resolver->GetBufferedInputTag(), Input_Light);
@@ -401,7 +446,7 @@ bool FCadenceArcSingleInputBufferTest::RunTest(const FString& Parameters)
 		OutputRequest.RequestId, static_cast<int64>(0));
 
 	TestTransition(*this, TEXT("Second input is buffered"),
-		Resolver->SubmitInput(Input_Heavy, OutputRequest),
+		Resolver->SubmitInput(MakeInput(Input_Heavy), OutputRequest),
 		ECadenceArcInputResult::Buffered);
 	TestTag(*this, TEXT("Later input overwrites earlier input"),
 		Resolver->GetBufferedInputTag(), Input_Heavy);
@@ -413,7 +458,7 @@ bool FCadenceArcSingleInputBufferTest::RunTest(const FString& Parameters)
 		Resolver->GetOutstandingRequest().RequestId, ExecutingRequest.RequestId);
 
 	TestTransition(*this, TEXT("Invalid input is rejected while window is open"),
-		Resolver->SubmitInput(FGameplayTag::EmptyTag, OutputRequest),
+		Resolver->SubmitInput(MakeInput(FGameplayTag::EmptyTag), OutputRequest),
 		ECadenceArcInputResult::InvalidInputTag);
 	TestTag(*this, TEXT("Invalid input preserves buffered value"),
 		Resolver->GetBufferedInputTag(), Input_Heavy);
@@ -423,7 +468,7 @@ bool FCadenceArcSingleInputBufferTest::RunTest(const FString& Parameters)
 	TestTag(*this, TEXT("Closing window retains buffered input"),
 		Resolver->GetBufferedInputTag(), Input_Heavy);
 	TestTransition(*this, TEXT("Later input outside window is rejected"),
-		Resolver->SubmitInput(Input_Light, OutputRequest),
+		Resolver->SubmitInput(MakeInput(Input_Light), OutputRequest),
 		ECadenceArcInputResult::BufferWindowClosed);
 	TestTag(*this, TEXT("Rejected later input preserves buffered value"),
 		Resolver->GetBufferedInputTag(), Input_Heavy);
@@ -438,6 +483,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FCadenceArcBufferedCompletionTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
 	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
 	Resolver->Initialize(MakeValidGraph());
 
@@ -449,14 +495,14 @@ bool FCadenceArcBufferedCompletionTest::RunTest(const FString& Parameters)
 
 	FCadenceArcActionRequest IgnoredRequest;
 	TestTransition(*this, TEXT("Light is buffered first"),
-		Resolver->SubmitInput(Input_Light, IgnoredRequest),
+		Resolver->SubmitInput(MakeInput(Input_Light), IgnoredRequest),
 		ECadenceArcInputResult::Buffered);
 	TestTransition(*this, TEXT("Heavy overwrites buffered Light"),
-		Resolver->SubmitInput(Input_Heavy, IgnoredRequest),
+		Resolver->SubmitInput(MakeInput(Input_Heavy), IgnoredRequest),
 		ECadenceArcInputResult::Buffered);
 
 	const FCadenceArcActionCompletionOutcome Outcome =
-		Resolver->NotifyActionCompleted(FirstRequest.RequestId);
+		CompleteAt(*this, Resolver, FirstRequest.RequestId, RegressionTimestampSeconds);
 	TestHandshake(*this, TEXT("Buffered completion succeeds"),
 		Outcome.HandshakeResult, ECadenceArcHandshakeResult::Success);
 	TestBufferConsume(*this, TEXT("Buffered input resolves"),
@@ -490,6 +536,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FCadenceArcBufferConsumeFailuresTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
 
 	UCadenceArcResolver* NoMatchResolver = NewObject<UCadenceArcResolver>();
 	NoMatchResolver->Initialize(MakeValidGraph());
@@ -499,9 +546,9 @@ bool FCadenceArcBufferConsumeFailuresTest::RunTest(const FString& Parameters)
 	StartAndExpect(*this, NoMatchResolver, NoMatchRequest, TEXT("No-match action"));
 	NoMatchResolver->OpenBufferWindow(NoMatchRequest.RequestId);
 	FCadenceArcActionRequest IgnoredRequest;
-	NoMatchResolver->SubmitInput(Input_Light, IgnoredRequest);
+	NoMatchResolver->SubmitInput(MakeInput(Input_Light), IgnoredRequest);
 	const FCadenceArcActionCompletionOutcome NoMatchOutcome =
-		NoMatchResolver->NotifyActionCompleted(NoMatchRequest.RequestId);
+		CompleteAt(*this, NoMatchResolver, NoMatchRequest.RequestId, RegressionTimestampSeconds);
 	TestHandshake(*this, TEXT("No-match completion succeeds"),
 		NoMatchOutcome.HandshakeResult, ECadenceArcHandshakeResult::Success);
 	TestBufferConsume(*this, TEXT("Missing transition is reported"),
@@ -521,11 +568,11 @@ bool FCadenceArcBufferConsumeFailuresTest::RunTest(const FString& Parameters)
 		Action_Root, Action_Light01, MissingCurrentRequest, TEXT("Missing-current action"));
 	StartAndExpect(*this, MissingCurrentResolver, MissingCurrentRequest, TEXT("Missing-current action"));
 	MissingCurrentResolver->OpenBufferWindow(MissingCurrentRequest.RequestId);
-	MissingCurrentResolver->SubmitInput(Input_Heavy, IgnoredRequest);
+	MissingCurrentResolver->SubmitInput(MakeInput(Input_Heavy), IgnoredRequest);
 	MissingCurrentGraph->Nodes.RemoveAll(
 		[](const FCadenceArcNode& Node) { return Node.ActionTag == Action_Light01; });
 	const FCadenceArcActionCompletionOutcome MissingCurrentOutcome =
-		MissingCurrentResolver->NotifyActionCompleted(MissingCurrentRequest.RequestId);
+		CompleteAt(*this, MissingCurrentResolver, MissingCurrentRequest.RequestId, RegressionTimestampSeconds);
 	TestBufferConsume(*this, TEXT("Missing current node is reported during consumption"),
 		MissingCurrentOutcome.BufferConsumeResult, ECadenceArcBufferConsumeResult::CurrentNodeNotFound);
 	TestState(*this, TEXT("Missing current node leaves resolver Ready"),
@@ -539,11 +586,11 @@ bool FCadenceArcBufferConsumeFailuresTest::RunTest(const FString& Parameters)
 		Action_Root, Action_Light01, MissingTargetRequest, TEXT("Missing-target action"));
 	StartAndExpect(*this, MissingTargetResolver, MissingTargetRequest, TEXT("Missing-target action"));
 	MissingTargetResolver->OpenBufferWindow(MissingTargetRequest.RequestId);
-	MissingTargetResolver->SubmitInput(Input_Heavy, IgnoredRequest);
+	MissingTargetResolver->SubmitInput(MakeInput(Input_Heavy), IgnoredRequest);
 	MissingTargetGraph->Nodes.RemoveAll(
 		[](const FCadenceArcNode& Node) { return Node.ActionTag == Action_Finisher01; });
 	const FCadenceArcActionCompletionOutcome MissingTargetOutcome =
-		MissingTargetResolver->NotifyActionCompleted(MissingTargetRequest.RequestId);
+		CompleteAt(*this, MissingTargetResolver, MissingTargetRequest.RequestId, RegressionTimestampSeconds);
 	TestBufferConsume(*this, TEXT("Missing target node is reported during consumption"),
 		MissingTargetOutcome.BufferConsumeResult, ECadenceArcBufferConsumeResult::TargetNodeNotFound);
 	TestState(*this, TEXT("Missing target node leaves resolver Ready"),
@@ -559,6 +606,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FCadenceArcLifecycleTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
 	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
 	Resolver->Initialize(MakeValidGraph());
 
@@ -591,6 +639,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FCadenceArcValidBranchesTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
 	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
 	Resolver->Initialize(MakeValidGraph());
 
@@ -617,6 +666,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FCadenceArcResolutionFailuresTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
 	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
 	ResolveFailureAndExpect(*this, Resolver, Input_Light,
 		ECadenceArcInputResult::NotInitialized, FGameplayTag::EmptyTag,
@@ -665,6 +715,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FCadenceArcHandshakeErrorsTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
 	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
 	TestHandshake(*this, TEXT("Callback before initialization is rejected"),
 		Resolver->NotifyActionStarted(1), ECadenceArcHandshakeResult::NotInitialized);
@@ -689,9 +740,9 @@ bool FCadenceArcHandshakeErrorsTest::RunTest(const FString& Parameters)
 	StartAndExpect(*this, Resolver, Request, TEXT("Handshake request"));
 	Resolver->OpenBufferWindow(Request.RequestId);
 	FCadenceArcActionRequest IgnoredRequest;
-	Resolver->SubmitInput(Input_Heavy, IgnoredRequest);
+	Resolver->SubmitInput(MakeInput(Input_Heavy), IgnoredRequest);
 	const FCadenceArcActionCompletionOutcome StaleCompletion =
-		Resolver->NotifyActionCompleted(Request.RequestId + 1);
+		CompleteAt(*this, Resolver, Request.RequestId + 1, RegressionTimestampSeconds);
 	TestHandshake(*this, TEXT("Stale completion ID is rejected"),
 		StaleCompletion.HandshakeResult, ECadenceArcHandshakeResult::RequestIdMismatch);
 	TestBufferConsume(*this, TEXT("Stale completion does not attempt consumption"),
@@ -727,7 +778,7 @@ bool FCadenceArcCancelInterruptTest::RunTest(const FString& Parameters)
 	Resolver->OpenBufferWindow(CancelledRequest.RequestId);
 	FCadenceArcActionRequest IgnoredRequest;
 	TestTransition(*this, TEXT("Input is buffered before cancellation"),
-		Resolver->SubmitInput(Input_Heavy, IgnoredRequest),
+		Resolver->SubmitInput(MakeInput(Input_Heavy), IgnoredRequest),
 		ECadenceArcInputResult::Buffered);
 	TestHandshake(*this, TEXT("Cancellation with wrong ID is rejected"),
 		Resolver->NotifyActionCancelled(CancelledRequest.RequestId + 1),
@@ -750,7 +801,7 @@ bool FCadenceArcCancelInterruptTest::RunTest(const FString& Parameters)
 	StartAndExpect(*this, Resolver, InterruptedRequest, TEXT("Interrupted request"));
 	Resolver->OpenBufferWindow(InterruptedRequest.RequestId);
 	TestTransition(*this, TEXT("Input is buffered before interruption"),
-		Resolver->SubmitInput(Input_Heavy, IgnoredRequest),
+		Resolver->SubmitInput(MakeInput(Input_Heavy), IgnoredRequest),
 		ECadenceArcInputResult::Buffered);
 	TestHandshake(*this, TEXT("Interrupt succeeds"),
 		Resolver->NotifyActionInterrupted(InterruptedRequest.RequestId),
@@ -773,6 +824,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FCadenceArcResetBusyTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
 	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
 	TestFalse(TEXT("Reset before initialization fails"), Resolver->Reset());
 	Resolver->Initialize(MakeValidGraph());
@@ -801,6 +853,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FCadenceArcRequestIdTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
 	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
 	Resolver->Initialize(MakeValidGraph());
 
@@ -822,6 +875,452 @@ bool FCadenceArcRequestIdTest::RunTest(const FString& Parameters)
 	ResolveAndExpect(*this, Resolver, Input_Light,
 		Action_Root, Action_Light01, Third, TEXT("Third request"));
 	TestTrue(TEXT("ID increases across reset and reinitialize"), Third.RequestId > Second.RequestId);
+	return !HasAnyErrors();
+}
+
+namespace CadenceArc::Tests
+{
+	static TArray<double> InvalidTimes()
+	{
+		return { -1.0, std::numeric_limits<double>::quiet_NaN(),
+			std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity() };
+	}
+
+	static bool TestEmptyRequest(FAutomationTestBase& Test, const FCadenceArcActionRequest& Request)
+	{
+		bool bPassed = Test.TestEqual(TEXT("Empty request has no ID"), Request.RequestId, int64{0});
+		bPassed &= Test.TestFalse(TEXT("Empty request has no input"), Request.InputTag.IsValid());
+		bPassed &= Test.TestFalse(TEXT("Empty request has no source"), Request.SourceActionTag.IsValid());
+		bPassed &= Test.TestFalse(TEXT("Empty request has no target"), Request.TargetActionTag.IsValid());
+		return bPassed;
+	}
+
+	struct FResolverSnapshot
+	{
+		ECadenceArcResolverState State;
+		FGameplayTag CurrentAction;
+		FCadenceArcActionRequest Request;
+		bool bWindowOpen;
+		FGameplayTag BufferedTag;
+
+		explicit FResolverSnapshot(const UCadenceArcResolver* Resolver)
+			: State(Resolver->GetState()), CurrentAction(Resolver->GetCurrentActionTag()),
+			  Request(Resolver->GetOutstandingRequest()), bWindowOpen(Resolver->IsBufferWindowOpen()),
+			  BufferedTag(Resolver->GetBufferedInputTag()) {}
+
+		void ExpectUnchanged(FAutomationTestBase& Test, const UCadenceArcResolver* Resolver) const
+		{
+			TestState(Test, TEXT("Failure preserves state"), Resolver->GetState(), State);
+			TestTag(Test, TEXT("Failure preserves committed node"), Resolver->GetCurrentActionTag(), CurrentAction);
+			const FCadenceArcActionRequest Actual = Resolver->GetOutstandingRequest();
+			Test.TestEqual(TEXT("Failure preserves request ID"), Actual.RequestId, Request.RequestId);
+			TestTag(Test, TEXT("Failure preserves request input"), Actual.InputTag, Request.InputTag);
+			TestTag(Test, TEXT("Failure preserves request source"), Actual.SourceActionTag, Request.SourceActionTag);
+			TestTag(Test, TEXT("Failure preserves request target"), Actual.TargetActionTag, Request.TargetActionTag);
+			Test.TestEqual(TEXT("Failure preserves window"), Resolver->IsBufferWindowOpen(), bWindowOpen);
+			TestTag(Test, TEXT("Failure preserves buffered tag"), Resolver->GetBufferedInputTag(), BufferedTag);
+		}
+	};
+
+	static bool BeginTimedAction(FAutomationTestBase& Test, UCadenceArcResolver* Resolver,
+		FCadenceArcActionRequest& Request, const double MaxAge)
+	{
+		UCadenceArcGraph* Graph = MakeValidGraph();
+		Graph->MaxBufferedInputAgeSeconds = MaxAge;
+		if (!TestInit(Test, TEXT("Timed graph initializes"), Resolver->Initialize(Graph),
+			ECadenceArcResolverInitResult::Success)) { return false; }
+		if (!ResolveAndExpect(Test, Resolver, Input_Light, Action_Root, Action_Light01, Request,
+			TEXT("Timed initial action"))) { return false; }
+		return StartAndExpect(Test, Resolver, Request, TEXT("Timed initial action"));
+	}
+
+	static bool BufferAt(FAutomationTestBase& Test, UCadenceArcResolver* Resolver,
+		const FCadenceArcActionRequest& Request, const FGameplayTag& InputTag, const double Timestamp)
+	{
+		if (!TestHandshake(Test, TEXT("Open timed buffer"), Resolver->OpenBufferWindow(Request.RequestId),
+			ECadenceArcHandshakeResult::Success)) { return false; }
+		FCadenceArcActionRequest Output;
+		const bool bBuffered = TestTransition(Test, TEXT("Store timed input"),
+			Resolver->SubmitInput(MakeInput(InputTag, Timestamp), Output), ECadenceArcInputResult::Buffered);
+		return TestEmptyRequest(Test, Output) && bBuffered;
+	}
+
+	static void ExpectTimedCompletion(FAutomationTestBase& Test, UCadenceArcResolver* Resolver,
+		const FCadenceArcActionRequest& CompletedRequest, const FCadenceArcActionCompletionOutcome& Outcome,
+		const ECadenceArcBufferConsumeResult Expected, const FGameplayTag& ExpectedInput = Input_Heavy,
+		const FGameplayTag& ExpectedTarget = Action_Finisher01)
+	{
+		TestHandshake(Test, TEXT("Completion handshake succeeds"), Outcome.HandshakeResult,
+			ECadenceArcHandshakeResult::Success);
+		TestBufferConsume(Test, TEXT("Timed consumption result"), Outcome.BufferConsumeResult, Expected);
+		TestTag(Test, TEXT("Completion retains committed node"), Resolver->GetCurrentActionTag(),
+			CompletedRequest.TargetActionTag);
+		Test.TestFalse(TEXT("Completion closes window"), Resolver->IsBufferWindowOpen());
+		Test.TestFalse(TEXT("Completion clears buffer"), Resolver->GetBufferedInputTag().IsValid());
+		if (Expected == ECadenceArcBufferConsumeResult::Resolved)
+		{
+			TestState(Test, TEXT("Resolved buffer waits for acceptance"), Resolver->GetState(),
+				ECadenceArcResolverState::AwaitingStart);
+			Test.TestEqual(TEXT("Exactly one next ID is allocated"), Outcome.NextActionRequest.RequestId,
+				CompletedRequest.RequestId + 1);
+			Test.TestEqual(TEXT("Next request is outstanding"), Resolver->GetOutstandingRequest().RequestId,
+				Outcome.NextActionRequest.RequestId);
+			TestTag(Test, TEXT("Next request input"), Outcome.NextActionRequest.InputTag, ExpectedInput);
+			TestTag(Test, TEXT("Next request source"), Outcome.NextActionRequest.SourceActionTag,
+				CompletedRequest.TargetActionTag);
+			TestTag(Test, TEXT("Next request target"), Outcome.NextActionRequest.TargetActionTag, ExpectedTarget);
+		}
+		else
+		{
+			TestState(Test, TEXT("Consumed failure or empty buffer returns Ready"), Resolver->GetState(),
+				ECadenceArcResolverState::Ready);
+			TestEmptyRequest(Test, Outcome.NextActionRequest);
+			TestEmptyRequest(Test, Resolver->GetOutstandingRequest());
+		}
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcInputEventValidityTest,
+	"CadenceArc.Resolver.Time.InputEventValidity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcInputEventValidityTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	TestFalse(TEXT("Default event has no valid tag"), FCadenceArcInputEvent{}.IsValid());
+	TestTrue(TEXT("Zero is a valid timestamp"), MakeInput(Input_Light, 0.0).IsValid());
+	TestTrue(TEXT("Positive finite timestamp is valid"), MakeInput(Input_Light, 1.25).IsValid());
+	TestFalse(TEXT("Missing tag is invalid even with valid time"), MakeInput(FGameplayTag::EmptyTag, 1.0).IsValid());
+	for (const double Invalid : InvalidTimes())
+	{
+		TestFalse(*FString::Printf(TEXT("Invalid timestamp %g fails event validity"), Invalid),
+			MakeInput(Input_Light, Invalid).IsValid());
+	}
+	// Exercise zero through the public API as well as the event helper. This remains
+	// mandatory even though other tests use a positive timestamp for their setup.
+	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	UCadenceArcGraph* Graph = MakeValidGraph();
+	Graph->MaxBufferedInputAgeSeconds = 0.5;
+	Resolver->Initialize(Graph);
+	FCadenceArcActionRequest Request;
+	if (!TestTransition(*this, TEXT("Ready accepts an input at time zero"),
+		Resolver->SubmitInput(MakeInput(Input_Light, 0.0), Request), ECadenceArcInputResult::Success))
+	{
+		return false;
+	}
+	if (!StartAndExpect(*this, Resolver, Request, TEXT("Zero-time initial action")) ||
+		!BufferAt(*this, Resolver, Request, Input_Heavy, 0.0)) { return false; }
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
+	ExpectTimedCompletion(*this, Resolver, Request, CompleteAt(*this, Resolver, Request.RequestId, 0.0),
+		ECadenceArcBufferConsumeResult::Resolved);
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcInputTimestampTest,
+	"CadenceArc.Resolver.Time.InputTimestampValidation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcInputTimestampTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	// Validate input regardless of the age-limit policy and before accepting or replacing it.
+	for (const double MaxAge : {0.0, 0.5})
+	{
+		for (int32 Mode = 0; Mode < 4; ++Mode) // Ready, AwaitingStart, Executing closed/open.
+		{
+			for (const double Invalid : InvalidTimes())
+			{
+				UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+				UCadenceArcGraph* Graph = MakeValidGraph();
+				Graph->MaxBufferedInputAgeSeconds = MaxAge;
+				Resolver->Initialize(Graph);
+				FCadenceArcActionRequest Initial;
+				if (Mode > 0 && !ResolveAndExpect(*this, Resolver, Input_Light, Action_Root, Action_Light01,
+					Initial, TEXT("Input validation setup"))) { return false; }
+				if (Mode > 1)
+				{
+					if (!StartAndExpect(*this, Resolver, Initial, TEXT("Input validation setup"))) { return false; }
+					if (!BufferAt(*this, Resolver, Initial, Input_Heavy, 1.0)) { return false; }
+					if (Mode == 2) { Resolver->CloseBufferWindow(Initial.RequestId); }
+				}
+				const FResolverSnapshot Before(Resolver);
+				FCadenceArcActionRequest Output = {999, Input_Heavy, Action_Root, Action_Heavy01};
+				TestTransition(*this, *FString::Printf(TEXT("Reject timestamp %g in mode %d with max age %g"),
+					Invalid, Mode, MaxAge), Resolver->SubmitInput(MakeInput(Input_Light, Invalid), Output),
+					ECadenceArcInputResult::InvalidTimestamp);
+				TestEmptyRequest(*this, Output);
+				Before.ExpectUnchanged(*this, Resolver);
+			}
+		}
+	}
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcAgeConfigurationTest,
+	"CadenceArc.Resolver.Time.AgeConfigurationAtomicity",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcAgeConfigurationTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	TestEqual(TEXT("Existing assets default to no expiry"), MakeValidGraph()->MaxBufferedInputAgeSeconds, 0.0);
+	for (const double Invalid : InvalidTimes())
+	{
+		UCadenceArcGraph* InvalidGraph = MakeValidGraph();
+		InvalidGraph->EntryActionTag = Action_Heavy01;
+		InvalidGraph->MaxBufferedInputAgeSeconds = Invalid;
+		UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+		const FResolverSnapshot Uninitialized(Resolver);
+		TestTrue(*FString::Printf(TEXT("Initial invalid max age %g is rejected"), Invalid),
+			Resolver->Initialize(InvalidGraph) != ECadenceArcResolverInitResult::Success);
+		Uninitialized.ExpectUnchanged(*this, Resolver);
+		TestFalse(TEXT("Invalid policy does not initialize resolver"), Resolver->IsInitialized());
+
+		Resolver->Initialize(MakeValidGraph());
+		FCadenceArcActionRequest First;
+		if (!ResolveAndExpect(*this, Resolver, Input_Light, Action_Root, Action_Light01, First,
+			TEXT("Original graph request"))) { return false; }
+		Resolver->NotifyActionRejected(First.RequestId);
+		const FResolverSnapshot Ready(Resolver);
+		TestTrue(*FString::Printf(TEXT("Reinitialize with invalid max age %g is rejected"), Invalid),
+			Resolver->Initialize(InvalidGraph) != ECadenceArcResolverInitResult::Success);
+		Ready.ExpectUnchanged(*this, Resolver);
+		FCadenceArcActionRequest Next;
+		ResolveAndExpect(*this, Resolver, Input_Light, Action_Root, Action_Light01, Next,
+			TEXT("Failed reinitialize retains original graph"));
+		TestEqual(TEXT("Failed reinitialize preserves ID sequence"), Next.RequestId, First.RequestId + 1);
+	}
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcExpiryBoundariesTest,
+	"CadenceArc.Resolver.Time.ExpiryBoundaries",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcExpiryBoundariesTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
+	struct FCase { double MaxAge; double InputTime; double CompletionTime; ECadenceArcBufferConsumeResult Result; };
+	// Binary-exact fractions make the equality boundary independent of rounding noise.
+	const FCase Cases[] = {
+		{0.0, 1.0, 1000000.0, ECadenceArcBufferConsumeResult::Resolved},
+		{0.5, 1.0, 1.0, ECadenceArcBufferConsumeResult::Resolved},
+		{0.5, 1.0, 1.25, ECadenceArcBufferConsumeResult::Resolved},
+		{0.5, 1.0, 1.5, ECadenceArcBufferConsumeResult::Resolved},
+		{0.5, 1.0, 1.75, ECadenceArcBufferConsumeResult::Expired}
+	};
+	for (const FCase& Case : Cases)
+	{
+		AddInfo(FString::Printf(TEXT("MaxAge=%g Input=%g Completion=%g"), Case.MaxAge, Case.InputTime, Case.CompletionTime));
+		UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+		TestNull(TEXT("Resolver uses no World"), Resolver->GetWorld());
+		FCadenceArcActionRequest Request;
+		if (!BeginTimedAction(*this, Resolver, Request, Case.MaxAge) ||
+			!BufferAt(*this, Resolver, Request, Input_Heavy, Case.InputTime)) { return false; }
+		const auto Outcome = CompleteAt(*this, Resolver, Request.RequestId, Case.CompletionTime);
+		ExpectTimedCompletion(*this, Resolver, Request, Outcome, Case.Result);
+		if (Case.Result == ECadenceArcBufferConsumeResult::Resolved)
+		{
+			StartAndExpect(*this, Resolver, Outcome.NextActionRequest, TEXT("Accept timed next action"));
+		}
+		else
+		{
+			FCadenceArcActionRequest Next;
+			ResolveAndExpect(*this, Resolver, Input_Light, Action_Light01, Action_Light02, Next,
+				TEXT("New input after expiry"));
+			TestEqual(TEXT("Expired input allocated no hidden request"), Next.RequestId, Request.RequestId + 1);
+		}
+	}
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcTimedReplacementTest,
+	"CadenceArc.Resolver.Time.LastInputReplacesTimestamp",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcTimedReplacementTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
+	for (const bool bSameTag : {false, true})
+	{
+		UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+		FCadenceArcActionRequest Request;
+		if (!BeginTimedAction(*this, Resolver, Request, 0.5) ||
+			!BufferAt(*this, Resolver, Request, Input_Light, 0.25)) { return false; }
+		const FGameplayTag LastTag = bSameTag ? Input_Light : Input_Heavy;
+		if (!BufferAt(*this, Resolver, Request, LastTag, 1.75)) { return false; }
+		Resolver->CloseBufferWindow(Request.RequestId);
+		FCadenceArcActionRequest Output;
+		TestTransition(*this, TEXT("Closed window rejects later valid input"),
+			Resolver->SubmitInput(MakeInput(Input_Heavy, 2.0), Output), ECadenceArcInputResult::BufferWindowClosed);
+		TestEmptyRequest(*this, Output);
+		// The first event would expire. The replacement remains valid exactly at its boundary.
+		const auto Outcome = CompleteAt(*this, Resolver, Request.RequestId, 2.25);
+		ExpectTimedCompletion(*this, Resolver, Request, Outcome, ECadenceArcBufferConsumeResult::Resolved,
+			LastTag, bSameTag ? Action_Light02 : Action_Finisher01);
+	}
+	// A rejected same-tag input must not refresh the stored timestamp.
+	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	FCadenceArcActionRequest Request;
+	if (!BeginTimedAction(*this, Resolver, Request, 0.5) ||
+		!BufferAt(*this, Resolver, Request, Input_Heavy, 1.0)) { return false; }
+	Resolver->CloseBufferWindow(Request.RequestId);
+	FCadenceArcActionRequest Output;
+	TestTransition(*this, TEXT("Closed window cannot refresh timestamp"),
+		Resolver->SubmitInput(MakeInput(Input_Heavy, 1.75), Output), ECadenceArcInputResult::BufferWindowClosed);
+	ExpectTimedCompletion(*this, Resolver, Request, CompleteAt(*this, Resolver, Request.RequestId, 2.0),
+		ECadenceArcBufferConsumeResult::Expired);
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcInvalidInputRetainsAgeTest,
+	"CadenceArc.Resolver.Time.InvalidInputPreservesBufferedAge",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcInvalidInputRetainsAgeTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
+	struct FCase { double CompletionTime; ECadenceArcBufferConsumeResult Result; };
+	const FCase Cases[] = {
+		{0.5, ECadenceArcBufferConsumeResult::InvalidTime},
+		{1.5, ECadenceArcBufferConsumeResult::Resolved},
+		{1.75, ECadenceArcBufferConsumeResult::Expired}
+	};
+	for (const double Invalid : InvalidTimes())
+	{
+		for (const FCase& Case : Cases)
+		{
+			UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+			FCadenceArcActionRequest Request;
+			if (!BeginTimedAction(*this, Resolver, Request, 0.5) ||
+				!BufferAt(*this, Resolver, Request, Input_Heavy, 1.0)) { return false; }
+			const FResolverSnapshot Before(Resolver);
+			FCadenceArcActionRequest Output;
+			TestTransition(*this, TEXT("Invalid same-tag input cannot replace timestamp"),
+				Resolver->SubmitInput(MakeInput(Input_Heavy, Invalid), Output), ECadenceArcInputResult::InvalidTimestamp);
+			TestEmptyRequest(*this, Output);
+			TestTransition(*this, TEXT("Invalid tag cannot refresh timestamp"),
+				Resolver->SubmitInput(MakeInput(FGameplayTag::EmptyTag, 1.25), Output), ECadenceArcInputResult::InvalidInputTag);
+			TestEmptyRequest(*this, Output);
+			Before.ExpectUnchanged(*this, Resolver);
+			// Check both sides of the original lifetime, plus backward time. A tag-only
+			// snapshot would miss a rejected event silently replacing the timestamp.
+			ExpectTimedCompletion(*this, Resolver, Request,
+				CompleteAt(*this, Resolver, Request.RequestId, Case.CompletionTime), Case.Result);
+		}
+	}
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcInvalidCompletionTimeTest,
+	"CadenceArc.Resolver.Time.InvalidCompletionRecovery",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcInvalidCompletionTimeTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
+	TArray<double> Times = InvalidTimes();
+	Times.Add(0.75); // Finite, nonnegative, but earlier than the buffered event.
+	for (const double MaxAge : {0.0, 0.5})
+	{
+		for (const double Invalid : Times)
+		{
+			AddInfo(FString::Printf(TEXT("Invalid completion=%g MaxAge=%g"), Invalid, MaxAge));
+			UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+			FCadenceArcActionRequest Request;
+			if (!BeginTimedAction(*this, Resolver, Request, MaxAge) ||
+				!BufferAt(*this, Resolver, Request, Input_Heavy, 1.0)) { return false; }
+			ExpectTimedCompletion(*this, Resolver, Request, CompleteAt(*this, Resolver, Request.RequestId, Invalid),
+				ECadenceArcBufferConsumeResult::InvalidTime);
+			const auto Repeated = CompleteAt(*this, Resolver, Request.RequestId, 1.5);
+			TestHandshake(*this, TEXT("InvalidTime already completed the old action"), Repeated.HandshakeResult,
+				ECadenceArcHandshakeResult::UnexpectedState);
+			TestBufferConsume(*this, TEXT("Repeated completion does not consume"), Repeated.BufferConsumeResult,
+				ECadenceArcBufferConsumeResult::NotAttempted);
+			FCadenceArcActionRequest Next;
+			ResolveAndExpect(*this, Resolver, Input_Light, Action_Light01, Action_Light02, Next,
+				TEXT("Input after invalid completion time"));
+			TestEqual(TEXT("InvalidTime allocated no hidden request"), Next.RequestId, Request.RequestId + 1);
+		}
+	}
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcEmptyTimedCompletionTest,
+	"CadenceArc.Resolver.Time.NoBufferedInput",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcEmptyTimedCompletionTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
+	TArray<double> Times = InvalidTimes();
+	Times.Add(10000.0);
+	for (const double Completion : Times)
+	{
+		UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+		FCadenceArcActionRequest Request;
+		if (!BeginTimedAction(*this, Resolver, Request, 0.5)) { return false; }
+		Resolver->OpenBufferWindow(Request.RequestId);
+		// With no buffered event there is no age to validate or expire.
+		ExpectTimedCompletion(*this, Resolver, Request, CompleteAt(*this, Resolver, Request.RequestId, Completion),
+			ECadenceArcBufferConsumeResult::NoBufferedInput);
+	}
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcTimedHandshakeAtomicityTest,
+	"CadenceArc.Resolver.Time.HandshakeBeforeTimeValidation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcTimedHandshakeAtomicityTest::RunTest(const FString& Parameters)
+{
+	using namespace CadenceArc::Tests;
+	if (!RequireExplicitCompletionTime(*this)) { return false; }
+	const double NaN = std::numeric_limits<double>::quiet_NaN();
+	UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+	const auto ExpectRejected = [&](const int64 Id, const double Time, const ECadenceArcHandshakeResult Expected)
+	{
+		const FResolverSnapshot Before(Resolver);
+		const auto Outcome = CompleteAt(*this, Resolver, Id, Time);
+		TestHandshake(*this, TEXT("Handshake error takes precedence over time"), Outcome.HandshakeResult, Expected);
+		TestBufferConsume(*this, TEXT("Rejected handshake does not consume"), Outcome.BufferConsumeResult,
+			ECadenceArcBufferConsumeResult::NotAttempted);
+		TestEmptyRequest(*this, Outcome.NextActionRequest);
+		Before.ExpectUnchanged(*this, Resolver);
+	};
+	ExpectRejected(1, NaN, ECadenceArcHandshakeResult::NotInitialized);
+	Resolver->Initialize(MakeValidGraph());
+	ExpectRejected(1, NaN, ECadenceArcHandshakeResult::UnexpectedState);
+	FCadenceArcActionRequest Old;
+	ResolveAndExpect(*this, Resolver, Input_Light, Action_Root, Action_Light01, Old, TEXT("Old timed request"));
+	ExpectRejected(Old.RequestId, NaN, ECadenceArcHandshakeResult::UnexpectedState);
+	StartAndExpect(*this, Resolver, Old, TEXT("Old timed request"));
+	Resolver->NotifyActionCancelled(Old.RequestId);
+	FCadenceArcActionRequest Current;
+	if (!BeginTimedAction(*this, Resolver, Current, 0.5) ||
+		!BufferAt(*this, Resolver, Current, Input_Heavy, 1.0)) { return false; }
+	TestTrue(TEXT("Reinitialize cannot recycle stale ID"), Current.RequestId > Old.RequestId);
+	ExpectRejected(0, NaN, ECadenceArcHandshakeResult::InvalidRequestId);
+	ExpectRejected(-1, NaN, ECadenceArcHandshakeResult::InvalidRequestId);
+	ExpectRejected(Old.RequestId, NaN, ECadenceArcHandshakeResult::RequestIdMismatch);
+	ExpectRejected(Old.RequestId, 10000.0, ECadenceArcHandshakeResult::RequestIdMismatch);
+	// An accepted completion still uses the original timestamp, despite stale callbacks.
+	ExpectTimedCompletion(*this, Resolver, Current, CompleteAt(*this, Resolver, Current.RequestId, 1.5),
+		ECadenceArcBufferConsumeResult::Resolved);
 	return !HasAnyErrors();
 }
 

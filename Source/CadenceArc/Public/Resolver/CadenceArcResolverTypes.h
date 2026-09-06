@@ -14,6 +14,7 @@ enum class ECadenceArcResolverInitResult : uint8
 	Busy
 };
 
+// Input
 UENUM(BlueprintType)
 enum class ECadenceArcInputResult : uint8
 {
@@ -25,8 +26,32 @@ enum class ECadenceArcInputResult : uint8
 	TargetNodeNotFound,
 	RequestPending,
 	Buffered,
-	BufferWindowClosed
+	BufferWindowClosed,
+	InvalidTimestamp
 };
+
+USTRUCT(BlueprintType)
+struct CADENCEARC_API FCadenceArcInputEvent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	FGameplayTag InputTag;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	double TimestampSeconds = 0.0;
+
+	bool IsValid() const
+	{
+		return InputTag.IsValid() && IsValidTimestamp();
+	}
+	
+	bool IsValidTimestamp() const
+	{
+		return TimestampSeconds >= 0.0 && FMath::IsFinite(TimestampSeconds);
+	}
+};
+
 
 UENUM(BlueprintType)
 enum class ECadenceArcResolverState : uint8
@@ -74,7 +99,9 @@ enum class ECadenceArcBufferConsumeResult : uint8
 	CurrentNodeNotFound,
 	NoMatchingTransition,
 	TargetNodeNotFound,
-	UnexpectedResult
+	UnexpectedResult,
+	Expired,
+	InvalidTime
 };
 
 USTRUCT(BlueprintType)

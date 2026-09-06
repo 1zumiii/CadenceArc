@@ -7,7 +7,8 @@ ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* 
 	{
 		return ECadenceArcResolverInitResult::Busy;
 	}
-	if (!IsValid(InGraph))
+	if (!IsValid(InGraph) || InGraph->MaxBufferedInputAgeSeconds < 0.0 || !FMath::IsFinite(
+		InGraph->MaxBufferedInputAgeSeconds))
 	{
 		return ECadenceArcResolverInitResult::InvalidGraph;
 	}
@@ -30,7 +31,7 @@ ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* 
 }
 
 ECadenceArcInputResult UCadenceArcResolver::SubmitInput(
-	const FGameplayTag& InInputTag,
+	const FCadenceArcInputEvent& InInputEvent,
 	FCadenceArcActionRequest& OutActionRequest
 )
 {
@@ -40,21 +41,26 @@ ECadenceArcInputResult UCadenceArcResolver::SubmitInput(
 		return ECadenceArcInputResult::NotInitialized;
 	}
 
-	if (!InInputTag.IsValid())
+	if (!InInputEvent.InputTag.IsValid())
 	{
 		return ECadenceArcInputResult::InvalidInputTag;
+	}
+
+	if (!InInputEvent.IsValidTimestamp())
+	{
+		return ECadenceArcInputResult::InvalidTimestamp;
 	}
 
 	switch (State)
 	{
 	case ECadenceArcResolverState::Ready:
-		return ResolveInput(InInputTag, OutActionRequest);
+		return ResolveInput(InInputEvent.InputTag, OutActionRequest);
 	case ECadenceArcResolverState::AwaitingStart:
 		return ECadenceArcInputResult::RequestPending;
 	case ECadenceArcResolverState::Executing:
 		if (bIsBufferWindowOpen)
 		{
-			BufferedInputTag = InInputTag;
+			BufferedInputEvent = InInputEvent;
 			return ECadenceArcInputResult::Buffered;
 		}
 		return ECadenceArcInputResult::BufferWindowClosed;
@@ -146,7 +152,8 @@ ECadenceArcHandshakeResult UCadenceArcResolver::SetBufferWindowState(const int64
 void UCadenceArcResolver::ClearInputBuffer()
 {
 	bIsBufferWindowOpen = false;
-	BufferedInputTag = FGameplayTag::EmptyTag;
+	BufferedInputEvent.InputTag = FGameplayTag::EmptyTag;
+	BufferedInputEvent.TimestampSeconds = 0.0;
 }
 
 
@@ -206,10 +213,12 @@ ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionRejected(const int64
 	return ECadenceArcHandshakeResult::Success;
 }
 
-FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(const int64 InRequestId)
+FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(
+	const int64 InRequestId, const double CompletionTimestampSeconds
+)
 {
 	FCadenceArcActionCompletionOutcome Outcome;
-	const FGameplayTag InputToConsume = GetBufferedInputTag();
+	// Validate handshake 
 	const ECadenceArcHandshakeResult HandshakeResult = ValidateHandshake(
 		InRequestId, ECadenceArcResolverState::Executing);
 	if (HandshakeResult != ECadenceArcHandshakeResult::Success)
@@ -217,16 +226,35 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(co
 		Outcome.HandshakeResult = HandshakeResult;
 		return Outcome;
 	}
-	State = ECadenceArcResolverState::Ready;
-	OutstandingRequest = FCadenceArcActionRequest{};
+	// Save a copy of the buffered input event before clearing it
+	const FCadenceArcInputEvent BufferedEventCopy = BufferedInputEvent;
+	const double BufferedInputAgeSeconds = CompletionTimestampSeconds - BufferedInputEvent.TimestampSeconds;
+	// Clear the buffered input event and reset the outstanding request
 	ClearInputBuffer();
-	if (!InputToConsume.IsValid())
+	OutstandingRequest = FCadenceArcActionRequest{};
+	bIsBufferWindowOpen = false;
+	Outcome.HandshakeResult = ECadenceArcHandshakeResult::Success;
+	State = ECadenceArcResolverState::Ready;
+
+	if (!BufferedEventCopy.InputTag.IsValid())
 	{
 		Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::NoBufferedInput;
-		Outcome.HandshakeResult = ECadenceArcHandshakeResult::Success;
 		return Outcome;
 	}
-	const ECadenceArcInputResult Result = ResolveInput(InputToConsume, Outcome.NextActionRequest);
+	if (!BufferedEventCopy.IsValidTimestamp() ||
+		!FMath::IsFinite(CompletionTimestampSeconds) ||
+		CompletionTimestampSeconds < 0.0 ||
+		CompletionTimestampSeconds < BufferedEventCopy.TimestampSeconds)
+	{
+		Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::InvalidTime;
+		return Outcome;
+	}
+	if (Graph->MaxBufferedInputAgeSeconds > 0.0 && BufferedInputAgeSeconds > Graph->MaxBufferedInputAgeSeconds)
+	{
+		Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::Expired;
+		return Outcome;
+	}
+	const ECadenceArcInputResult Result = ResolveInput(BufferedEventCopy.InputTag, Outcome.NextActionRequest);
 	if (Result == ECadenceArcInputResult::Success)
 	{
 		Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::Resolved;
@@ -250,7 +278,6 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(co
 			break;
 		}
 	}
-	Outcome.HandshakeResult = ECadenceArcHandshakeResult::Success;
 	return Outcome;
 }
 

@@ -34,7 +34,7 @@ private:
 	UPROPERTY(Transient)
 	bool bIsBufferWindowOpen = false;
 	UPROPERTY(Transient)
-	FGameplayTag BufferedInputTag;
+	FCadenceArcInputEvent BufferedInputEvent;
 
 	// Helper functions
 	ECadenceArcInputResult ResolveInput(
@@ -51,7 +51,7 @@ private:
 		const int64 InRequestId,
 		const bool bShouldOpen
 	);
-	
+
 	void ClearInputBuffer();
 
 public:
@@ -60,7 +60,7 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	ECadenceArcInputResult SubmitInput(
-		const FGameplayTag& InInputTag,
+		const FCadenceArcInputEvent& InInputEvent,
 		FCadenceArcActionRequest& OutActionRequest
 	);
 
@@ -84,7 +84,7 @@ public:
 	bool IsBufferWindowOpen() const { return bIsBufferWindowOpen; }
 
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
-	FGameplayTag GetBufferedInputTag() const { return BufferedInputTag; }
+	FGameplayTag GetBufferedInputTag() const { return BufferedInputEvent.InputTag; }
 
 	/// Handshake Notifications
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
@@ -94,7 +94,10 @@ public:
 	ECadenceArcHandshakeResult NotifyActionRejected(const int64 InRequestId);
 
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
-	FCadenceArcActionCompletionOutcome NotifyActionCompleted(const int64 InRequestId);
+	FCadenceArcActionCompletionOutcome NotifyActionCompleted(
+		const int64 InRequestId,
+		const double CompletionTimestampSeconds
+	);
 
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	ECadenceArcHandshakeResult NotifyActionCancelled(const int64 InRequestId);
