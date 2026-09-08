@@ -37,7 +37,7 @@ private:
 	FCadenceArcInputEvent BufferedInputEvent;
 
 	// Helper functions
-	ECadenceArcInputResult ResolveInput(
+	ECadenceArcResolveResult ResolveInput(
 		const FGameplayTag& InInputTag,
 		FCadenceArcActionRequest& OutActionRequest
 	);
@@ -52,6 +52,12 @@ private:
 		const bool bShouldOpen
 	);
 
+	void TranslateResolveResult(
+		const ECadenceArcResolveResult InResult,
+		ECadenceArcResolutionCategory& OutCategory,
+		ECadenceArcResolutionReason& OutReason
+	);
+
 	void ClearInputBuffer();
 
 public:
@@ -59,13 +65,10 @@ public:
 	ECadenceArcResolverInitResult Initialize(UCadenceArcGraph* InGraph);
 
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
-	ECadenceArcInputResult SubmitInput(
-		const FCadenceArcInputEvent& InInputEvent,
-		FCadenceArcActionRequest& OutActionRequest
-	);
+	FCadenceArcSubmitOutcome SubmitInput(const FCadenceArcInputEvent& InInputEvent);
 
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
-	bool Reset();
+	ECadenceArcResolverResetResult Reset();
 
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
 	bool IsInitialized() const;

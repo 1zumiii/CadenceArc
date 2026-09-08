@@ -5,7 +5,7 @@ ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* 
 {
 	if (State == ECadenceArcResolverState::AwaitingStart || State == ECadenceArcResolverState::Executing)
 	{
-		return ECadenceArcResolverInitResult::Busy;
+		return ECadenceArcResolverInitResult::UnexpectedState;
 	}
 	if (!IsValid(InGraph) || InGraph->MaxBufferedInputAgeSeconds < 0.0 || !FMath::IsFinite(
 		InGraph->MaxBufferedInputAgeSeconds))
@@ -30,87 +30,110 @@ ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* 
 	return ECadenceArcResolverInitResult::Success;
 }
 
-ECadenceArcInputResult UCadenceArcResolver::SubmitInput(
-	const FCadenceArcInputEvent& InInputEvent,
-	FCadenceArcActionRequest& OutActionRequest
-)
+FCadenceArcSubmitOutcome UCadenceArcResolver::SubmitInput(const FCadenceArcInputEvent& InInputEvent)
 {
-	OutActionRequest = FCadenceArcActionRequest{};
+	FCadenceArcSubmitOutcome Outcome;
+	Outcome.SetRejected(ECadenceArcResolutionReason::NotInitialized); // 悲观默认值,每条分支都会覆盖它
+
 	if (State == ECadenceArcResolverState::Uninitialized)
 	{
-		return ECadenceArcInputResult::NotInitialized;
+		return Outcome;
 	}
-
 	if (!InInputEvent.InputTag.IsValid())
 	{
-		return ECadenceArcInputResult::InvalidInputTag;
+		Outcome.SetRejected(ECadenceArcResolutionReason::InvalidInputTag);
+		return Outcome;
 	}
-
 	if (!InInputEvent.IsValidTimestamp())
 	{
-		return ECadenceArcInputResult::InvalidTimestamp;
+		Outcome.SetRejected(ECadenceArcResolutionReason::InvalidTimestamp);
+		return Outcome;
 	}
 
 	switch (State)
 	{
 	case ECadenceArcResolverState::Ready:
-		return ResolveInput(InInputEvent.InputTag, OutActionRequest);
+		{
+			FCadenceArcActionRequest NewRequest;
+			const ECadenceArcResolveResult Result = ResolveInput(InInputEvent.InputTag, NewRequest);
+			ECadenceArcResolutionCategory Category;
+			ECadenceArcResolutionReason Reason;
+			TranslateResolveResult(Result, Category, Reason);
+			switch (Category)
+			{
+			case ECadenceArcResolutionCategory::RequestProduced:
+				Outcome.SetRequestProduced(NewRequest);
+				break;
+			case ECadenceArcResolutionCategory::NoAction:
+				Outcome.SetNoAction(Reason);
+				break;
+			default: // Rejected
+				Outcome.SetRejected(Reason);
+				break;
+			}
+			return Outcome;
+		}
 	case ECadenceArcResolverState::AwaitingStart:
-		return ECadenceArcInputResult::RequestPending;
+		Outcome.SetNoAction(ECadenceArcResolutionReason::RequestPending);
+		return Outcome;
 	case ECadenceArcResolverState::Executing:
 		if (bIsBufferWindowOpen)
 		{
 			BufferedInputEvent = InInputEvent;
-			return ECadenceArcInputResult::Buffered;
+			Outcome.SetBuffered();
 		}
-		return ECadenceArcInputResult::BufferWindowClosed;
+		else
+		{
+			Outcome.SetNoAction(ECadenceArcResolutionReason::BufferWindowClosed);
+		}
+		return Outcome;
 	default:
-		return ECadenceArcInputResult::NotInitialized;
+		return Outcome; // 理论不可达,保留悲观默认
 	}
 }
 
-ECadenceArcInputResult UCadenceArcResolver::ResolveInput(
+ECadenceArcResolveResult UCadenceArcResolver::ResolveInput(
 	const FGameplayTag& InInputTag, FCadenceArcActionRequest& OutActionRequest
 )
 {
 	if (!IsInitialized())
 	{
-		return ECadenceArcInputResult::NotInitialized;
+		return ECadenceArcResolveResult::NotInitialized;
 	}
 	if (!InInputTag.IsValid())
 	{
-		return ECadenceArcInputResult::InvalidInputTag;
+		return ECadenceArcResolveResult::InvalidInputTag;
 	}
 	const FCadenceArcNode* CurrentNode = Graph->Nodes.FindByPredicate(
 		[&](const FCadenceArcNode& Node) { return Node.ActionTag == CurrentActionTag; }
 	);
 	if (!CurrentNode)
 	{
-		return ECadenceArcInputResult::CurrentNodeNotFound;
+		return ECadenceArcResolveResult::CurrentNodeNotFound;
 	}
 	const FCadenceArcTransition* CurrentTransition = CurrentNode->Transitions.FindByPredicate(
 		[&](const FCadenceArcTransition& Transition) { return Transition.InputTag == InInputTag; }
 	);
 	if (!CurrentTransition)
 	{
-		return ECadenceArcInputResult::NoMatchingTransition;
+		return ECadenceArcResolveResult::NoMatchingTransition;
 	}
 	const FCadenceArcNode* TargetNode = Graph->Nodes.FindByPredicate(
 		[&](const FCadenceArcNode& Node) { return Node.ActionTag == CurrentTransition->TargetActionTag; }
 	);
 	if (!TargetNode)
 	{
-		return ECadenceArcInputResult::TargetNodeNotFound;
+		return ECadenceArcResolveResult::TargetNodeNotFound;
 	}
 	OutstandingRequest = FCadenceArcActionRequest{
-		NextRequestId++,
-		InInputTag,
-		CurrentActionTag,
-		TargetNode->ActionTag
+		.RequestId = NextRequestId++,
+		.InputTag = InInputTag,
+		.SourceActionTag = CurrentActionTag,
+		.TargetActionTag = TargetNode->ActionTag
 	};
 	OutActionRequest = OutstandingRequest;
 	State = ECadenceArcResolverState::AwaitingStart;
-	return ECadenceArcInputResult::Success;
+	return ECadenceArcResolveResult::Success;
 }
 
 ECadenceArcHandshakeResult UCadenceArcResolver::ValidateHandshake(
@@ -157,11 +180,11 @@ void UCadenceArcResolver::ClearInputBuffer()
 }
 
 
-bool UCadenceArcResolver::Reset()
+ECadenceArcResolverResetResult UCadenceArcResolver::Reset()
 {
 	if (!IsInitialized())
 	{
-		return false;
+		return ECadenceArcResolverResetResult::NotInitialized;
 	}
 	// Reset Can't interrupt an ongoing action, so only allow reset when the resolver is ready.
 	// otherwise the current action will be lost and the resolver will be in an inconsistent state.
@@ -175,9 +198,9 @@ bool UCadenceArcResolver::Reset()
 	case ECadenceArcResolverState::AwaitingStart:
 	case ECadenceArcResolverState::Executing:
 	default:
-		return false;
+		return ECadenceArcResolverResetResult::Busy;
 	}
-	return true;
+	return ECadenceArcResolverResetResult::Success;
 }
 
 bool UCadenceArcResolver::IsInitialized() const
@@ -223,7 +246,7 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(
 		InRequestId, ECadenceArcResolverState::Executing);
 	if (HandshakeResult != ECadenceArcHandshakeResult::Success)
 	{
-		Outcome.HandshakeResult = HandshakeResult;
+		Outcome.SetHandshakeRejected(HandshakeResult);
 		return Outcome;
 	}
 	// Save a copy of the buffered input event before clearing it
@@ -238,7 +261,8 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(
 
 	if (!BufferedEventCopy.InputTag.IsValid())
 	{
-		Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::NoBufferedInput;
+		Outcome.SetBufferConsumption(ECadenceArcResolutionCategory::NoAction,
+		                             ECadenceArcResolutionReason::NoBufferedInput);
 		return Outcome;
 	}
 	if (!BufferedEventCopy.IsValidTimestamp() ||
@@ -246,38 +270,26 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(
 		CompletionTimestampSeconds < 0.0 ||
 		CompletionTimestampSeconds < BufferedEventCopy.TimestampSeconds)
 	{
-		Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::InvalidTime;
+		Outcome.SetBufferConsumption(ECadenceArcResolutionCategory::Rejected,
+		                             ECadenceArcResolutionReason::InvalidCompletionTime);
 		return Outcome;
 	}
 	if (Graph->MaxBufferedInputAgeSeconds > 0.0 && BufferedInputAgeSeconds > Graph->MaxBufferedInputAgeSeconds)
 	{
-		Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::Expired;
+		Outcome.SetBufferConsumption(ECadenceArcResolutionCategory::NoAction, ECadenceArcResolutionReason::Expired);
 		return Outcome;
 	}
-	const ECadenceArcInputResult Result = ResolveInput(BufferedEventCopy.InputTag, Outcome.NextActionRequest);
-	if (Result == ECadenceArcInputResult::Success)
+	FCadenceArcActionRequest NewRequest;
+	const ECadenceArcResolveResult Result = ResolveInput(BufferedEventCopy.InputTag, NewRequest);
+	if (Result == ECadenceArcResolveResult::Success)
 	{
-		Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::Resolved;
 		State = ECadenceArcResolverState::AwaitingStart;
 	}
-	else
-	{
-		switch (Result)
-		{
-		case ECadenceArcInputResult::CurrentNodeNotFound:
-			Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::CurrentNodeNotFound;
-			break;
-		case ECadenceArcInputResult::NoMatchingTransition:
-			Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::NoMatchingTransition;
-			break;
-		case ECadenceArcInputResult::TargetNodeNotFound:
-			Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::TargetNodeNotFound;
-			break;
-		default:
-			Outcome.BufferConsumeResult = ECadenceArcBufferConsumeResult::UnexpectedResult;
-			break;
-		}
-	}
+
+	ECadenceArcResolutionCategory ResolutionCategory;
+	ECadenceArcResolutionReason ResolutionReason;
+	TranslateResolveResult(Result, ResolutionCategory, ResolutionReason);
+	Outcome.SetBufferConsumption(ResolutionCategory, ResolutionReason, NewRequest);
 	return Outcome;
 }
 
@@ -319,4 +331,38 @@ ECadenceArcHandshakeResult UCadenceArcResolver::OpenBufferWindow(const int64 InR
 ECadenceArcHandshakeResult UCadenceArcResolver::CloseBufferWindow(const int64 InRequestId)
 {
 	return SetBufferWindowState(InRequestId, false);
+}
+
+void UCadenceArcResolver::TranslateResolveResult(
+	const ECadenceArcResolveResult InResult,
+	ECadenceArcResolutionCategory& OutCategory,
+	ECadenceArcResolutionReason& OutReason
+)
+{
+	switch (InResult)
+	{
+	case ECadenceArcResolveResult::Success:
+		OutCategory = ECadenceArcResolutionCategory::RequestProduced;
+		OutReason = ECadenceArcResolutionReason::None;
+		return;
+	case ECadenceArcResolveResult::NoMatchingTransition:
+		OutCategory = ECadenceArcResolutionCategory::NoAction;
+		OutReason = ECadenceArcResolutionReason::NoMatchingTransition;
+		return;
+	case ECadenceArcResolveResult::CurrentNodeNotFound:
+		OutCategory = ECadenceArcResolutionCategory::Rejected;
+		OutReason = ECadenceArcResolutionReason::CurrentNodeNotFound;
+		return;
+	case ECadenceArcResolveResult::TargetNodeNotFound:
+		OutCategory = ECadenceArcResolutionCategory::Rejected;
+		OutReason = ECadenceArcResolutionReason::TargetNodeNotFound;
+		return;
+	case ECadenceArcResolveResult::InvalidInputTag:
+		OutCategory = ECadenceArcResolutionCategory::Rejected;
+		OutReason = ECadenceArcResolutionReason::InvalidInputTag;
+		return;
+	default: // NotInitialized / InvalidInputTag,不可达但保留防御分支
+		OutCategory = ECadenceArcResolutionCategory::Rejected;
+		OutReason = ECadenceArcResolutionReason::NotInitialized;
+	}
 }

@@ -2,33 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
+#include "CadenceArcResolverEnums.h"
 #include "CadenceArcResolverTypes.generated.h"
-
-UENUM(BlueprintType)
-enum class ECadenceArcResolverInitResult : uint8
-{
-	Success,
-	InvalidGraph,
-	InvalidEntryActionTag,
-	EntryNodeNotFound,
-	Busy
-};
-
-// Input
-UENUM(BlueprintType)
-enum class ECadenceArcInputResult : uint8
-{
-	Success,
-	NotInitialized,
-	InvalidInputTag,
-	CurrentNodeNotFound,
-	NoMatchingTransition,
-	TargetNodeNotFound,
-	RequestPending,
-	Buffered,
-	BufferWindowClosed,
-	InvalidTimestamp
-};
 
 USTRUCT(BlueprintType)
 struct CADENCEARC_API FCadenceArcInputEvent
@@ -52,26 +27,6 @@ struct CADENCEARC_API FCadenceArcInputEvent
 	}
 };
 
-
-UENUM(BlueprintType)
-enum class ECadenceArcResolverState : uint8
-{
-	Uninitialized,
-	Ready,
-	AwaitingStart,
-	Executing,
-};
-
-UENUM(BlueprintType)
-enum class ECadenceArcHandshakeResult : uint8
-{
-	Success,
-	NotInitialized,
-	InvalidRequestId,
-	UnexpectedState,
-	RequestIdMismatch
-};
-
 USTRUCT(BlueprintType)
 struct CADENCEARC_API FCadenceArcActionRequest
 {
@@ -90,31 +45,122 @@ struct CADENCEARC_API FCadenceArcActionRequest
 	FGameplayTag TargetActionTag;
 };
 
-UENUM(BlueprintType)
-enum class ECadenceArcBufferConsumeResult : uint8
-{
-	NotAttempted,
-	NoBufferedInput,
-	Resolved,
-	CurrentNodeNotFound,
-	NoMatchingTransition,
-	TargetNodeNotFound,
-	UnexpectedResult,
-	Expired,
-	InvalidTime
-};
-
+// Resolver 输出合法结果组合、调用者只消费结果
 USTRUCT(BlueprintType)
 struct CADENCEARC_API FCadenceArcActionCompletionOutcome
 {
 	GENERATED_BODY()
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	[[nodiscard]] ECadenceArcHandshakeResult GetHandshakeResult() const { return HandshakeResult; }
+
+	[[nodiscard]] ECadenceArcResolutionCategory GetBufferConsumption() const { return BufferConsumption; }
+
+	[[nodiscard]] ECadenceArcResolutionReason GetBufferConsumptionReason() const { return BufferConsumptionReason; }
+
+	[[nodiscard]] FCadenceArcActionRequest GetNextActionRequest() const { return NextActionRequest; }
+
+	friend class UCadenceArcResolver;
+
+public:
+	// 握手失败时 BufferConsumption 字段无意义,不能单看它
+	// 如果蓝图里需要调用后续需要补在Blueprint Function Library
+	bool HasNextActionRequest() const
+	{
+		return HandshakeResult == ECadenceArcHandshakeResult::Success
+			&& BufferConsumption == ECadenceArcResolutionCategory::RequestProduced;
+	}
+
+private:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
 	ECadenceArcHandshakeResult HandshakeResult = ECadenceArcHandshakeResult::NotInitialized;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
-	ECadenceArcBufferConsumeResult BufferConsumeResult = ECadenceArcBufferConsumeResult::NotAttempted;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	ECadenceArcResolutionCategory BufferConsumption = ECadenceArcResolutionCategory::Rejected;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	ECadenceArcResolutionReason BufferConsumptionReason = ECadenceArcResolutionReason::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
 	FCadenceArcActionRequest NextActionRequest;
+
+	void SetHandshakeRejected(const ECadenceArcHandshakeResult InHandshakeResult)
+	{
+		HandshakeResult = InHandshakeResult;
+		BufferConsumption = ECadenceArcResolutionCategory::Rejected;
+		BufferConsumptionReason = ECadenceArcResolutionReason::None;
+		NextActionRequest = FCadenceArcActionRequest{};
+	}
+
+	void SetBufferConsumption(
+		const ECadenceArcResolutionCategory InCategory,
+		const ECadenceArcResolutionReason InReason,
+		const FCadenceArcActionRequest& InRequest = FCadenceArcActionRequest{}
+	)
+	{
+		HandshakeResult = ECadenceArcHandshakeResult::Success;
+		BufferConsumption = InCategory;
+		BufferConsumptionReason = InReason;
+		NextActionRequest = InRequest;
+	}
+};
+
+USTRUCT(BlueprintType)
+struct CADENCEARC_API FCadenceArcSubmitOutcome
+{
+	GENERATED_BODY()
+
+	[[nodiscard]] ECadenceArcResolutionCategory GetCategory() const { return Category; }
+
+	[[nodiscard]] ECadenceArcResolutionReason GetReason() const { return Reason; }
+
+	[[nodiscard]] FCadenceArcActionRequest GetActionRequest() const { return ActionRequest; }
+
+	friend class UCadenceArcResolver;
+
+public:
+	// 绑定 Category,而不是检查 RequestId 是否非零
+	// 如果蓝图里需要调用后续需要补在Blueprint Function Library
+	bool HasActionRequest() const
+	{
+		return Category == ECadenceArcResolutionCategory::RequestProduced;
+	}
+
+private:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	ECadenceArcResolutionCategory Category = ECadenceArcResolutionCategory::Rejected;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	ECadenceArcResolutionReason Reason = ECadenceArcResolutionReason::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	FCadenceArcActionRequest ActionRequest;
+
+	// 只有 Resolver 能调,外部(含 Blueprint)拿到的永远是这四种组合之一
+	void SetRejected(const ECadenceArcResolutionReason InReason)
+	{
+		Category = ECadenceArcResolutionCategory::Rejected;
+		Reason = InReason;
+		ActionRequest = FCadenceArcActionRequest{};
+	}
+
+	void SetNoAction(const ECadenceArcResolutionReason InReason)
+	{
+		Category = ECadenceArcResolutionCategory::NoAction;
+		Reason = InReason;
+		ActionRequest = FCadenceArcActionRequest{};
+	}
+
+	void SetBuffered()
+	{
+		Category = ECadenceArcResolutionCategory::Buffered;
+		Reason = ECadenceArcResolutionReason::None;
+		ActionRequest = FCadenceArcActionRequest{};
+	}
+
+	void SetRequestProduced(const FCadenceArcActionRequest& InRequest)
+	{
+		Category = ECadenceArcResolutionCategory::RequestProduced;
+		Reason = ECadenceArcResolutionReason::None;
+		ActionRequest = InRequest;
+	}
 };

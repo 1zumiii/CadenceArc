@@ -209,9 +209,19 @@ CadenceArc is developed and validated through the separate [CadenceArcSandbox](h
 
 ## Testing
 
-The editor suite contains 30 Unreal Automation Tests: 24 resolver tests and 6 editor graph-validation groups. Coverage includes:
+The editor suite contains 31 Unreal Automation Tests: 25 resolver tests and 6 editor graph-validation groups. The tests are organized under `Source/CadenceArc/Private/Tests/`:
+
+- `CadenceArcTestSupport.h/.cpp`: shared graph fixtures, tags, assertions, and time helpers;
+- `Resolver/CadenceArcResolverContractTests.cpp`: public outcomes, initialization, resolution, branches, and request IDs;
+- `Resolver/CadenceArcResolverBufferTests.cpp`: buffer windows, replacement, and consumption;
+- `Resolver/CadenceArcResolverLifecycleTests.cpp`: lifecycle callbacks, cancellation, interruption, and reset;
+- `Resolver/CadenceArcResolverTimeTests.cpp`: timestamps and buffer expiry;
+- `Graph/CadenceArcGraphValidationTests.cpp`: editor graph validation.
+
+Coverage includes:
 
 - graph initialization and failure atomicity;
+- public outcome categories and reasons, default values, request availability, and request-getter copy isolation;
 - action request creation;
 - valid light, heavy, and finisher branches;
 - pending and executing state guards;
