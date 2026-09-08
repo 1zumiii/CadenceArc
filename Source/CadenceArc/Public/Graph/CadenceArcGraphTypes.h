@@ -12,6 +12,11 @@ struct CADENCEARC_API FCadenceArcTransition
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	FGameplayTag TargetActionTag;
+
+	bool operator ==(const FCadenceArcTransition& Others) const
+	{
+		return InputTag == Others.InputTag && TargetActionTag == Others.TargetActionTag;
+	}
 };
 
 USTRUCT(BlueprintType)
@@ -24,4 +29,9 @@ struct CADENCEARC_API FCadenceArcNode
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	TArray<FCadenceArcTransition> Transitions;
+
+	bool operator ==(const FCadenceArcNode& Others) const
+	{
+		return ActionTag == Others.ActionTag && Transitions == Others.Transitions;
+	}
 };

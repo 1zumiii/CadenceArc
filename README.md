@@ -5,7 +5,7 @@ CadenceArc is a tag-driven, execution-agnostic branching action framework for Un
 It resolves semantic input tags through a configurable action graph and emits action requests without knowing how those actions are executed.
 
 ```text
-InputTag
+InputEvent (InputTag + TimestampSeconds)
   -> SubmitInput
   -> resolve now or buffer during execution
   -> ActionRequest
@@ -20,6 +20,8 @@ The name reflects the long-term design: player **cadence** shapes an **arc** thr
 
 CadenceArc is currently at `0.3.0-alpha`. Its runtime API and asset format may change before the first stable release.
 
+The current development checkout completes Phase 5 (explicit time and optional buffered-input expiry), followed by editor graph validation. The descriptor version above has not been bumped as part of this documentation update. The Phase 5 input and completion signatures are breaking changes from the original `0.3.0-alpha` API.
+
 The current milestone provides:
 
 - configurable action graphs backed by a `UDataAsset`;
@@ -32,10 +34,12 @@ The current milestone provides:
 - a single-slot, Last Input Wins input buffer;
 - automatic buffered-input resolution when an action completes;
 - structured completion outcomes containing handshake and buffer-consumption results;
+- caller-supplied timestamps and optional graph-wide buffered-input expiry;
+- editor asset validation with deterministic, actionable diagnostics;
 - Blueprint-accessible data and resolver APIs;
 - memory-only Unreal Automation Tests.
 
-Input timestamps, hold and release phases, cadence conditions, execution adapters, and networking are not implemented yet.
+Hold and release phases, cadence conditions, production execution adapters, and networking are not implemented yet. A temporary Enhanced Input and Timer adapter lives in CadenceArcSandbox.
 
 ## Why the Handshake Exists
 
@@ -55,7 +59,7 @@ The resolver never assumes that an emitted action was successfully executed.
 
 ## Input Buffering
 
-`SubmitInput` has state-dependent behavior:
+`SubmitInput` validates the input tag and a finite, nonnegative timestamp before accepting an input. Zero is valid; invalid timestamps return `InvalidTimestamp` without replacing a valid buffer. For valid events it has state-dependent behavior:
 
 | Resolver state | Buffer window | Result |
 | --- | --- | --- |
@@ -69,10 +73,49 @@ The external executor controls the timing window with `OpenBufferWindow(RequestI
 When the current action completes, `NotifyActionCompleted` returns an `FCadenceArcActionCompletionOutcome`:
 
 - `HandshakeResult` reports whether the completion callback matched the active request;
-- `BufferConsumeResult` reports whether a buffered input was absent, resolved, or failed graph validation;
+- `BufferConsumeResult` reports whether a buffered input was absent, resolved, expired, had invalid time, or failed graph resolution;
 - `NextActionRequest` contains the next request when consumption succeeds.
 
 A successfully consumed input moves the resolver directly to `AwaitingStart`. The next target action is still not committed until the external executor reports `NotifyActionStarted`.
+
+## Explicit Time and Expiry
+
+The caller supplies time through both public APIs:
+
+```cpp
+ECadenceArcInputResult SubmitInput(
+    const FCadenceArcInputEvent& InputEvent,
+    FCadenceArcActionRequest& OutActionRequest);
+
+FCadenceArcActionCompletionOutcome NotifyActionCompleted(
+    int64 RequestId,
+    double CompletionTimestampSeconds);
+```
+
+`FCadenceArcInputEvent` contains `InputTag` and `double TimestampSeconds`. Input and completion timestamps must use the same nondecreasing time domain, measured in seconds. The resolver does not read `UWorld`, platform time, or frame ticks, and timestamps must not be multiplied by frame rate or delta time. It validates the completion-to-buffer relationship; it does not maintain a global clock or validate the ordering of every submitted event.
+
+Sandbox supplies World game time; memory-only tests supply fixed values. Game time pauses with the world and follows time dilation. Selecting another consistent time domain is the adapter's responsibility.
+
+`UCadenceArcGraph::MaxBufferedInputAgeSeconds` defaults to `0.0`, which disables the age limit. Initialization rejects negative or non-finite limits as `InvalidGraph`, without replacing an existing valid configuration. Last Input Wins replaces both the tag and timestamp; closing the window preserves both.
+
+After a successful completion handshake:
+
+| Condition | Buffer result | Resulting state |
+| --- | --- | --- |
+| No buffered input | `NoBufferedInput`; completion time is irrelevant | `Ready` |
+| Completion time is non-finite, negative, or earlier than the buffered input | `InvalidTime` | `Ready` |
+| Age limit is enabled and `CompletionTimestampSeconds - TimestampSeconds > MaxBufferedInputAgeSeconds` | `Expired` | `Ready` |
+| Input is within the limit, or the limit is disabled | Resolve the buffered tag | `AwaitingStart` on success; otherwise `Ready` |
+
+An age exactly equal to the limit remains valid. Disabling expiry skips only the age-limit comparison; timestamp validation still applies. `InvalidTime` and `Expired` finish the old action, clear its request, window, and buffer, and preserve the committed node. They emit no next request and keep `HandshakeResult = Success`. A failed handshake leaves all resolver state unchanged and reports `NotAttempted` for buffer consumption.
+
+## Editor Graph Validation
+
+`UCadenceArcGraph::IsDataValid` integrates with Unreal's asset validation under `WITH_EDITOR`. It reports empty graphs, invalid or duplicate node tags, invalid or missing entry nodes, invalid age limits, invalid transition tags, missing targets, and duplicate input tags within a source node.
+
+Validation collects diagnostics without modifying the asset and emits them in deterministic array order. A valid graph returns `Valid`, while errors return `Invalid`. Forward references, self-loops, cycles, terminal nodes, and reuse of an input tag across different nodes are allowed. Reachability analysis and conditional-edge priorities are not implemented.
+
+Editor validation does not replace runtime guards. Runtime initialization checks the graph, age limit, and entry node; resolution still checks the current and target nodes. No `UnrealEd` dependency is added to the runtime module.
 
 ## Runtime Model
 
@@ -92,6 +135,7 @@ A successfully consumed input moves the resolver directly to `AwaitingStart`. Th
 
 - `EntryActionTag`
 - `Nodes`
+- `MaxBufferedInputAgeSeconds`
 
 The entry node may use a non-executable root tag that only represents the initial resolver state.
 
@@ -165,7 +209,7 @@ CadenceArc is developed and validated through the separate [CadenceArcSandbox](h
 
 ## Testing
 
-The current suite contains 15 Unreal Automation Tests covering:
+The editor suite contains 30 Unreal Automation Tests: 24 resolver tests and 6 editor graph-validation groups. Coverage includes:
 
 - graph initialization and failure atomicity;
 - action request creation;
@@ -180,7 +224,12 @@ The current suite contains 15 Unreal Automation Tests covering:
 - no-match and broken-graph failures during buffer consumption;
 - buffer cleanup after completion, cancellation, and interruption;
 - reset and reinitialization rules;
-- monotonically increasing request IDs.
+- monotonically increasing request IDs;
+- zero, negative, non-finite, and backwards time;
+- disabled expiry, exact age boundaries, and full event replacement;
+- completion recovery and handshake precedence over invalid time;
+- valid graph topology and invalid node, edge, entry, and age configuration;
+- multiple diagnostics, repeatable diagnostic ordering, and validation non-mutation.
 
 From a CadenceArcSandbox checkout, run:
 
@@ -190,16 +239,20 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 
 The runner performs a cold editor build and then runs tests with English Unreal output to avoid localized result-parsing issues in Rider.
 
+Exact timing boundaries are verified with injected timestamps, without sleeps or manual frame timing. PIE smoke checks cover real input integration and observable execution; they do not require a person to distinguish subsecond boundaries.
+
 ## Roadmap
 
 Planned work includes:
 
 1. press, release, hold, pause, and directional conditions;
-2. injectable time semantics and input expiry;
+2. node- or transition-level expiry policies;
 3. transition conditions, priority, and ambiguity validation;
-4. graph data validation and debugging tools;
+4. graph reachability analysis and richer debugging tools;
 5. optional execution adapters, including GAS;
 6. input recording, replay, networking, and prediction research.
+
+A future API design review will consider separating a small set of caller-facing outcomes from detailed diagnostic reasons. This is a proposal; the current enums and the separate handshake/consumption outcomes remain in place.
 
 ## Requirements
 

@@ -19,8 +19,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	TArray<FCadenceArcNode> Nodes;
-	
+
 	// 0.0 means disable buffered input age check, otherwise the resolver will reject buffered inputs older than this value in seconds
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	double MaxBufferedInputAgeSeconds = 0.0;
+
+#if WITH_EDITOR
+	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
+#endif
 };

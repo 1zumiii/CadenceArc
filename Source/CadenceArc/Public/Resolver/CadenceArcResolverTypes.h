@@ -45,7 +45,7 @@ struct CADENCEARC_API FCadenceArcInputEvent
 	{
 		return InputTag.IsValid() && IsValidTimestamp();
 	}
-	
+
 	bool IsValidTimestamp() const
 	{
 		return TimestampSeconds >= 0.0 && FMath::IsFinite(TimestampSeconds);
