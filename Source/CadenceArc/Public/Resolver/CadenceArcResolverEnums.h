@@ -74,3 +74,11 @@ enum class ECadenceArcResolverResetResult : uint8
 	Success,
 	Busy
 };
+
+UENUM(BlueprintType)
+enum class ECadenceArcGestureResult : uint8
+{
+	Rejected = 0,
+	Granted,
+	Cancelled
+};

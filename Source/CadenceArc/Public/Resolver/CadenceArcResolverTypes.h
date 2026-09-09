@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "CadenceArcResolverEnums.h"
+#include "Input/CadenceArcInputTypes.h"
 #include "CadenceArcResolverTypes.generated.h"
 
 USTRUCT(BlueprintType)
@@ -16,14 +17,41 @@ struct CADENCEARC_API FCadenceArcInputEvent
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Resolver")
 	double TimestampSeconds = 0.0;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Resolver")
+	ECadenceArcInputPhase InputPhase = ECadenceArcInputPhase::Pressed;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Resolver")
+	double HeldDurationSeconds = 0.0;
+
 	bool IsValid() const
 	{
-		return InputTag.IsValid() && IsValidTimestamp();
+		if (InputTag.IsValid() && IsValidTimestamp() && IsValidHeldDuration() && IsValidInputPhase())
+		{
+			if (InputPhase == ECadenceArcInputPhase::Pressed)
+			{
+				return HeldDurationSeconds == 0.0;
+			}
+			if (InputPhase == ECadenceArcInputPhase::Released)
+			{
+				return HeldDurationSeconds >= 0.0 && TimestampSeconds >= HeldDurationSeconds;
+			}
+		}
+		return false;
 	}
 
 	bool IsValidTimestamp() const
 	{
 		return TimestampSeconds >= 0.0 && FMath::IsFinite(TimestampSeconds);
+	}
+
+	bool IsValidHeldDuration() const
+	{
+		return HeldDurationSeconds >= 0.0 && FMath::IsFinite(HeldDurationSeconds);
+	}
+
+	bool IsValidInputPhase() const
+	{
+		return StaticEnum<ECadenceArcInputPhase>()->IsValidEnumValue(static_cast<int64>(InputPhase));
 	}
 };
 
@@ -163,4 +191,57 @@ private:
 		Reason = ECadenceArcResolutionReason::None;
 		ActionRequest = InRequest;
 	}
+};
+
+USTRUCT(BlueprintType)
+struct CADENCEARC_API FCadenceArcGestureSnapshot
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	bool bHasGesture = false;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	FCadenceArcInputToken Token;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	FGameplayTag InputTag;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	FGameplayTag SourceActionTag;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	ECadenceArcGestureStage Stage = ECadenceArcGestureStage::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	double PressedTimestampSeconds = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	double ChargeStartSeconds = 0.0;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	double ChargeFullSeconds = 0.0;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	double MaxChargedHoldSeconds = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	double LastObservedTimestampSeconds = 0.0;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	double ChargeFullTimestampSeconds = 0.0;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	double AutoReleaseTimestampSeconds = 0.0;
+};
+
+USTRUCT(BlueprintType)
+struct CADENCEARC_API FCadenceArcGestureOutcome
+{
+	GENERATED_BODY()
+
+	friend class UCadenceArcResolver;
+
+	[[nodiscard]] ECadenceArcGestureResult GetResult() const { return Result; }
+
+	[[nodiscard]] ECadenceArcResolutionReason GetReason() const { return Reason; }
+
+private:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	ECadenceArcGestureResult Result = ECadenceArcGestureResult::Rejected;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	ECadenceArcResolutionReason Reason = ECadenceArcResolutionReason::None;
 };
