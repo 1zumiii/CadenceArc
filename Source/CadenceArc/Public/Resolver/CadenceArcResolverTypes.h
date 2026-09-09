@@ -10,10 +10,10 @@ struct CADENCEARC_API FCadenceArcInputEvent
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Resolver")
 	FGameplayTag InputTag;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Resolver")
 	double TimestampSeconds = 0.0;
 
 	bool IsValid() const

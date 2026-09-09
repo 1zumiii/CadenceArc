@@ -22,6 +22,8 @@ CadenceArc is currently at `0.3.0-alpha`. Its runtime API and asset format may c
 
 The current development checkout completes Phase 5 (explicit time and optional buffered-input expiry), followed by editor graph validation. The descriptor version above has not been bumped as part of this documentation update. The Phase 5 input and completion signatures are breaking changes from the original `0.3.0-alpha` API.
 
+The development public result API uses private fields with const C++ getters, four resolution categories, and separate diagnostic reasons. The Blueprint Function Library provides read-only access. Cold editor build and all 31 automated tests passed on 2026-09-09; the user reported both Blueprint acceptance routes successful. Demo logging and invalid enum redirects have been corrected. These checks do not establish compatibility with every historical Blueprint asset.
+
 The current milestone provides:
 
 - configurable action graphs backed by a `UDataAsset`;
@@ -64,17 +66,17 @@ The resolver never assumes that an emitted action was successfully executed.
 | Resolver state | Buffer window | Result |
 | --- | --- | --- |
 | `Ready` | Irrelevant | Resolves the graph immediately and may emit an `ActionRequest`. |
-| `AwaitingStart` | Closed | Returns `RequestPending` without changing state. |
-| `Executing` | Open | Stores the input and returns `Buffered`; a later valid input overwrites it. |
-| `Executing` | Closed | Returns `BufferWindowClosed` without changing the stored input. |
+| `AwaitingStart` | Closed | Returns `NoAction / RequestPending` without changing state. |
+| `Executing` | Open | Stores the input and returns `Buffered / None`; a later valid input overwrites it. |
+| `Executing` | Closed | Returns `NoAction / BufferWindowClosed` without changing the stored input. |
 
 The external executor controls the timing window with `OpenBufferWindow(RequestId)` and `CloseBufferWindow(RequestId)`. Both calls require the current executing request ID, making stale animation or state-machine notifications harmless. Closing a window freezes the stored input rather than clearing it.
 
 When the current action completes, `NotifyActionCompleted` returns an `FCadenceArcActionCompletionOutcome`:
 
-- `HandshakeResult` reports whether the completion callback matched the active request;
-- `BufferConsumeResult` reports whether a buffered input was absent, resolved, expired, had invalid time, or failed graph resolution;
-- `NextActionRequest` contains the next request when consumption succeeds.
+- `GetHandshakeResult()` reports whether the completion callback matched the active request;
+- `GetBufferConsumption()` and `GetBufferConsumptionReason()` report the resolution category and diagnostic reason, meaningful only after a successful handshake;
+- `GetNextActionRequest()` returns a copy of the next request when `HasNextActionRequest()` is true.
 
 A successfully consumed input moves the resolver directly to `AwaitingStart`. The next target action is still not committed until the external executor reports `NotifyActionStarted`.
 
@@ -83,9 +85,8 @@ A successfully consumed input moves the resolver directly to `AwaitingStart`. Th
 The caller supplies time through both public APIs:
 
 ```cpp
-ECadenceArcInputResult SubmitInput(
-    const FCadenceArcInputEvent& InputEvent,
-    FCadenceArcActionRequest& OutActionRequest);
+FCadenceArcSubmitOutcome SubmitInput(
+    const FCadenceArcInputEvent& InputEvent);
 
 FCadenceArcActionCompletionOutcome NotifyActionCompleted(
     int64 RequestId,
@@ -102,12 +103,55 @@ After a successful completion handshake:
 
 | Condition | Buffer result | Resulting state |
 | --- | --- | --- |
-| No buffered input | `NoBufferedInput`; completion time is irrelevant | `Ready` |
-| Completion time is non-finite, negative, or earlier than the buffered input | `InvalidTime` | `Ready` |
-| Age limit is enabled and `CompletionTimestampSeconds - TimestampSeconds > MaxBufferedInputAgeSeconds` | `Expired` | `Ready` |
+| No buffered input | `NoAction / NoBufferedInput`; completion time is irrelevant | `Ready` |
+| Completion time is non-finite, negative, or earlier than the buffered input | `Rejected / InvalidCompletionTime` | `Ready` |
+| Age limit is enabled and `CompletionTimestampSeconds - TimestampSeconds > MaxBufferedInputAgeSeconds` | `NoAction / Expired` | `Ready` |
 | Input is within the limit, or the limit is disabled | Resolve the buffered tag | `AwaitingStart` on success; otherwise `Ready` |
 
-An age exactly equal to the limit remains valid. Disabling expiry skips only the age-limit comparison; timestamp validation still applies. `InvalidTime` and `Expired` finish the old action, clear its request, window, and buffer, and preserve the committed node. They emit no next request and keep `HandshakeResult = Success`. A failed handshake leaves all resolver state unchanged and reports `NotAttempted` for buffer consumption.
+An age exactly equal to the limit remains valid. Disabling expiry skips only the age-limit comparison; timestamp validation still applies. `InvalidCompletionTime` and `Expired` finish the old action, clear its request, window, and buffer, and preserve the committed node. They emit no next request and keep `HandshakeResult = Success`. A failed handshake leaves all resolver state unchanged. Its default consumption fields (`Rejected / None`) mean consumption was not attempted; there is no public `NotAttempted` enum value.
+
+## Public Results and Migration
+
+`FCadenceArcSubmitOutcome` exposes `GetCategory()`, `GetReason()`, `GetActionRequest()`, and `HasActionRequest()`. Request getters return copies. The Resolver constructs outcomes through private setters; consumers use the read-only interface.
+
+| Category | Meaning | Request |
+| --- | --- | --- |
+| `RequestProduced` | A candidate transition exists; `Reason` is `None`. | Candidate, awaiting Started |
+| `Buffered` | The complete input replaced the single buffer slot; `Reason` is `None`. | Empty |
+| `NoAction` | No transition now: e.g. `RequestPending`, `BufferWindowClosed`, `NoMatchingTransition`. | Empty |
+| `Rejected` | Invalid call or graph data; inspect `Reason`. | Empty |
+
+Default-constructed outcomes do not indicate success. Empty requests have ID zero and all tags empty. `HasActionRequest()` checks `RequestProduced`; `HasNextActionRequest()` additionally requires a successful completion handshake. Do not infer success from the ID alone.
+
+The following fragments belong in an external executor; `StartRequest` represents the host's execution routine:
+
+```cpp
+const FCadenceArcSubmitOutcome Submit = Resolver->SubmitInput(InputEvent);
+if (Submit.HasActionRequest())
+{
+    StartRequest(Submit.GetActionRequest());
+}
+
+const FCadenceArcActionCompletionOutcome Completion =
+    Resolver->NotifyActionCompleted(CompletedRequestId, NowSeconds);
+if (Completion.HasNextActionRequest())
+{
+    StartRequest(Completion.GetNextActionRequest());
+}
+```
+
+`StartRequest` checks execution prerequisites, rejects a candidate with `NotifyActionRejected` when necessary, and calls `NotifyActionStarted(RequestId)`. Only after `ECadenceArcHandshakeResult::Success` may it begin execution and report "started". A refused completion is logged using its handshake result; consumption category/reason are logged only after an accepted completion.
+
+Migration from earlier development APIs:
+
+- Replace the old two-argument `SubmitInput` and its output parameter with the returned submit outcome.
+- Replace `ECadenceArcInputResult` comparisons with category/reason checks. Use the request inside the outcome.
+- Replace `BufferConsumeResult` with the completion category/reason getters; gate them on the handshake result. Old `Resolved` means `RequestProduced / None`, `InvalidTime` means `Rejected / InvalidCompletionTime`, and `Expired` means `NoAction / Expired`.
+- Compare `Reset()` explicitly with `ECadenceArcResolverResetResult::Success`; it now returns `Success`, `NotInitialized`, or `Busy`, not bool. Initialization's former `Busy` is now `UnexpectedState`.
+- Outcome C++ fields are private. Update direct field access to getters; do not add test friends or bypass access control.
+- Blueprint users must refresh/reconnect affected signatures and compile their assets. Historical redirects alone cannot convert an enum output into an outcome structure. Invalid duplicate redirects targeting the removed `ECadenceArcInputResult` have been removed; old enum-based nodes require manual migration to category/reason handling. Automatic migration of historical assets is not guaranteed.
+
+The Sandbox's C++ executor already owns input and lifecycle handling. Blueprint API acceptance uses an independent small test Actor and Resolver, without recreating that executor or adding duplicate input bindings. Outcome getter/Has methods are ordinary C++ methods; UCadenceArcBlueprintLibrary exposes nine BlueprintPure wrappers that forward to them. The user reported the two Blueprint test routes successful; the C++ suite remains separate evidence.
 
 ## Editor Graph Validation
 
@@ -255,14 +299,12 @@ Exact timing boundaries are verified with injected timestamps, without sleeps or
 
 Planned work includes:
 
-1. press, release, hold, pause, and directional conditions;
-2. node- or transition-level expiry policies;
-3. transition conditions, priority, and ambiguity validation;
-4. graph reachability analysis and richer debugging tools;
+1. confirm the Phase 6 design decisions using the reviewed public result API baseline;
+2. Phase 6: press/release pairing, explicit held duration, tap/hold conditions, and ambiguity rejection (design to be agreed before implementation);
+3. Phase 7: a read-only runtime graph debugger showing state, candidate/committed transitions, buffer windows, and diagnostic history;
+4. later: pause/directional conditions, additional expiry policies, priorities, and reachability analysis;
 5. optional execution adapters, including GAS;
 6. input recording, replay, networking, and prediction research.
-
-A future API design review will consider separating a small set of caller-facing outcomes from detailed diagnostic reasons. This is a proposal; the current enums and the separate handshake/consumption outcomes remain in place.
 
 ## Requirements
 
