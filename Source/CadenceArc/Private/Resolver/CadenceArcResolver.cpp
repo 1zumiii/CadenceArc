@@ -7,8 +7,8 @@ ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* 
 	{
 		return ECadenceArcResolverInitResult::UnexpectedState;
 	}
-	if (!IsValid(InGraph) || InGraph->MaxBufferedInputAgeSeconds < 0.0 || !FMath::IsFinite(
-		InGraph->MaxBufferedInputAgeSeconds))
+	if (!IsValid(InGraph) || InGraph->MaxBufferedInputAgeSeconds < 0.0 
+		|| !FMath::IsFinite(InGraph->MaxBufferedInputAgeSeconds))
 	{
 		return ECadenceArcResolverInitResult::InvalidGraph;
 	}
@@ -21,6 +21,11 @@ ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* 
 	)
 	{
 		return ECadenceArcResolverInitResult::EntryNodeNotFound;
+	}
+	TArray<FText> ValidationErrors;
+	if (!InGraph->ValidateGraph(ValidationErrors))
+	{
+		return ECadenceArcResolverInitResult::InvalidGraph;
 	}
 	Graph = InGraph;
 	CurrentActionTag = InGraph->EntryActionTag;

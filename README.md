@@ -41,7 +41,9 @@ The current milestone provides:
 - Blueprint-accessible data and resolver APIs;
 - memory-only Unreal Automation Tests.
 
-Hold and release phases, cadence conditions, production execution adapters, and networking are not implemented yet. A temporary Enhanced Input and Timer adapter lives in CadenceArcSandbox.
+Phase 6 graph configuration now supports input phases and half-open held-duration ranges, including multiple release tiers. `FCadenceArcNode::IsValidTransition` validates local ranges and gesture configuration; `UCadenceArcGraph::ValidateGraph` adds topology checks and is also used by editor asset validation. Adjacent ranges and gaps are allowed; overlapping ranges are rejected. An optional, single timing configuration per node/input tag uses the unbounded highest tier's minimum as the full-charge threshold. A short-attack companion edge is not required.
+
+The resolver still resolves by input tag: initialization has not yet been connected to the complete graph validator, and held-duration selection, gesture protection, and automatic release are not implemented. Do not use multi-tier graph configuration as an executable resolver feature yet. Production execution adapters and networking remain future work. A temporary Enhanced Input and Timer adapter lives in CadenceArcSandbox.
 
 ## Why the Handshake Exists
 

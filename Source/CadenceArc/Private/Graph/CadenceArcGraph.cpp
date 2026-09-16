@@ -1,112 +1,90 @@
 #include "Graph/CadenceArcGraph.h"
 
-
 #if WITH_EDITOR
 #include "Misc/DataValidation.h"
+#endif
 
-EDataValidationResult UCadenceArcGraph::IsDataValid(FDataValidationContext& Context) const
+bool UCadenceArcGraph::ValidateGraph(TArray<FText>& OutErrors) const
 {
-	EDataValidationResult Result = CombineDataValidationResults(
-		Super::IsDataValid(Context), EDataValidationResult::Valid
-	);
-
-	if (Nodes.Num() == 0)
+	OutErrors.Reset();
+	const auto AddError = [&OutErrors](const FString& Message)
 	{
-		Context.AddError(FText::FromString(TEXT("Nodes array is empty.")));
-		Result = CombineDataValidationResults(Result, EDataValidationResult::Invalid);
+		OutErrors.Add(FText::FromString(Message));
+	};
+	if (Nodes.IsEmpty())
+	{
+		AddError(TEXT("Nodes array is empty."));
 	}
 
-	// 构建 TagMap 并校验节点本身的 ActionTag
-	TMap<FGameplayTag, int64> TagMap;
-	for (int64 i = 0; i < Nodes.Num(); ++i)
+	// 先收集节点，允许前向引用、环和自环；Map只用于查找，不决定诊断顺序。
+	TMap<FGameplayTag, int32> TagMap;
+	for (int32 Index = 0; Index < Nodes.Num(); ++Index)
 	{
-		if (const auto& [ActionTag, Transitions] = Nodes[i]; !ActionTag.IsValid())
+		const FGameplayTag ActionTag = Nodes[Index].ActionTag;
+		if (!ActionTag.IsValid())
 		{
-			Context.AddError(
-				FText::FromString(FString::Printf(TEXT("Node at index %lld has an invalid ActionTag."), i)));
-			Result = CombineDataValidationResults(Result, EDataValidationResult::Invalid);
+			AddError(FString::Printf(TEXT("Node at index %d has an invalid ActionTag."), Index));
 		}
-		else if (const int64* FirstIndex = TagMap.Find(ActionTag))
+		else if (const int32* FirstIndex = TagMap.Find(ActionTag))
 		{
-			Context.AddError(FText::FromString(FString::Printf(
-				TEXT("Duplicate ActionTag '%s' found at index %lld (first found at index %lld)."),
-				*ActionTag.ToString(), i, *FirstIndex)));
-			Result = CombineDataValidationResults(Result, EDataValidationResult::Invalid);
+			AddError(FString::Printf(TEXT("Duplicate ActionTag '%s' found at index %d (first found at index %d)."),
+			                         *ActionTag.ToString(), Index, *FirstIndex));
 		}
 		else
 		{
-			TagMap.Add(ActionTag, i);
+			TagMap.Add(ActionTag, Index);
 		}
 	}
 
-	// 校验图表级属性
 	if (!EntryActionTag.IsValid())
 	{
-		Context.AddError(FText::FromString(TEXT("EntryActionTag is not valid.")));
-		Result = CombineDataValidationResults(Result, EDataValidationResult::Invalid);
+		AddError(TEXT("EntryActionTag is not valid."));
 	}
 	else if (!TagMap.Contains(EntryActionTag))
 	{
-		Context.AddError(FText::FromString(FString::Printf(
-			TEXT("EntryActionTag '%s' does not exist in the nodes."),
-			*EntryActionTag.ToString())));
-		Result = CombineDataValidationResults(Result, EDataValidationResult::Invalid);
+		AddError(FString::Printf(TEXT("EntryActionTag '%s' does not exist in the nodes."), *EntryActionTag.ToString()));
 	}
-
 	if (MaxBufferedInputAgeSeconds < 0.0 || !FMath::IsFinite(MaxBufferedInputAgeSeconds))
 	{
-		Context.AddError(FText::FromString(TEXT("MaxBufferedInputAgeSeconds must be non-negative and finite.")));
-		Result = CombineDataValidationResults(Result, EDataValidationResult::Invalid);
+		AddError(TEXT("MaxBufferedInputAgeSeconds must be non-negative and finite."));
 	}
 
-	// 合并后的 Transitions 校验
-	TSet<FGameplayTag> LocalInputTags; // 内存分配移至外层，避免循环内反复申请内存
-	for (int64 i = 0; i < Nodes.Num(); ++i)
+	TArray<FText> NodeErrors;
+	for (int32 NodeIndex = 0; NodeIndex < Nodes.Num(); ++NodeIndex)
 	{
-		const auto& [ActionTag, Transitions] = Nodes[i];
-		LocalInputTags.Reset(); // 清空容器但保留底层内存容量
-
-		for (int64 j = 0; j < Transitions.Num(); ++j)
+		const FCadenceArcNode& Node = Nodes[NodeIndex];
+		// 节点负责内部区间和配置；图负责目标存在性，避免两处维护同一套规则。
+		Node.IsValidTransition(&NodeErrors);
+		for (const FText& Error : NodeErrors)
 		{
-			const auto& [InputTag, TargetActionTag] = Transitions[j];
-			if (!InputTag.IsValid())
+			AddError(FString::Printf(TEXT("Node at index %d: %s"), NodeIndex, *Error.ToString()));
+		}
+		for (int32 EdgeIndex = 0; EdgeIndex < Node.Transitions.Num(); ++EdgeIndex)
+		{
+			const FGameplayTag Target = Node.Transitions[EdgeIndex].TargetActionTag;
+			if (Target.IsValid() && !TagMap.Contains(Target))
 			{
-				Context.AddError(FText::FromString(FString::Printf(
-					TEXT("Transition at index %lld in node '%s' (index %lld) has an invalid InputTag."),
-					j, *ActionTag.ToString(), i)));
-				Result = CombineDataValidationResults(Result, EDataValidationResult::Invalid);
-			}
-			else
-			{
-				bool bIsAlreadyInSet = false;
-				LocalInputTags.Add(InputTag, &bIsAlreadyInSet);
-				if (bIsAlreadyInSet)
-				{
-					Context.AddError(FText::FromString(FString::Printf(
-						TEXT("Node '%s' (index %lld) has multiple transitions with the same InputTag '%s'."),
-						*ActionTag.ToString(), i, *InputTag.ToString())));
-					Result = CombineDataValidationResults(Result, EDataValidationResult::Invalid);
-				}
-			}
-
-			if (!TargetActionTag.IsValid())
-			{
-				Context.AddError(FText::FromString(FString::Printf(
-					TEXT("Transition at index %lld in node '%s' (index %lld) has an invalid TargetActionTag."),
-					j, *ActionTag.ToString(), i)));
-				Result = CombineDataValidationResults(Result, EDataValidationResult::Invalid);
-			}
-			else if (!TagMap.Contains(TargetActionTag))
-			{
-				Context.AddError(FText::FromString(FString::Printf(
+				AddError(FString::Printf(
 					TEXT(
-						"Transition at index %lld in node '%s' (index %lld) has a TargetActionTag '%s' that does not exist in the nodes."),
-					j, *ActionTag.ToString(), i, *TargetActionTag.ToString())));
-				Result = CombineDataValidationResults(Result, EDataValidationResult::Invalid);
+						"Transition at index %d in node '%s' (index %d) has a TargetActionTag '%s' that does not exist in the nodes."),
+					EdgeIndex, *Node.ActionTag.ToString(), NodeIndex, *Target.ToString()));
 			}
 		}
 	}
+	return OutErrors.IsEmpty();
+}
 
-	return Result;
+#if WITH_EDITOR
+EDataValidationResult UCadenceArcGraph::IsDataValid(FDataValidationContext& Context) const
+{
+	TArray<FText> Errors;
+	const bool bValid = ValidateGraph(Errors);
+	for (const FText& Error : Errors)
+	{
+		Context.AddError(Error);
+	}
+	return CombineDataValidationResults(
+		Super::IsDataValid(Context), bValid ? EDataValidationResult::Valid : EDataValidationResult::Invalid
+	);
 }
 #endif

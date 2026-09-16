@@ -24,6 +24,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	double MaxBufferedInputAgeSeconds = 0.0;
 
+	// Runtime和编辑器共用的只读校验入口；每次先清空OutErrors。
+	bool ValidateGraph(TArray<FText>& OutErrors) const;
+
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
 #endif
