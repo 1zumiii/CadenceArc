@@ -201,6 +201,9 @@ struct CADENCEARC_API FCadenceArcHoldSnapshot
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
 	bool bHasHold = false;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	bool bHasChargeConfig = false;
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
 	FCadenceArcInputToken Token;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
 	FGameplayTag InputTag;
@@ -245,4 +248,3 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
 	ECadenceArcResolutionReason Reason = ECadenceArcResolutionReason::None;
 };
-

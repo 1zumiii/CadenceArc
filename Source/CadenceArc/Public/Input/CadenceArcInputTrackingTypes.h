@@ -15,6 +15,7 @@ enum class ECadenceArcInputTrackingResult : uint8
 	PairCancelled
 };
 
+
 UENUM(BlueprintType)
 enum class ECadenceArcInputTrackingReason : uint8
 {
