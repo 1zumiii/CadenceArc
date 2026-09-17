@@ -371,6 +371,154 @@ namespace CadenceArc::Tests
 	}
 
 	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcInitializeGraphValidationTest,
+		"CadenceArc.Resolver.Initialize.SharedGraphValidation",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcInitializeGraphValidationTest::RunTest(const FString& Parameters)
+	{
+		using namespace CadenceArc::Tests;
+		// 每个案例只制造一条共享校验错误，以便日志契约精确覆盖而不吞掉其他 Error。
+		const auto ExpectInvalidInitialization = [this](
+			const TCHAR* What, UCadenceArcGraph* Graph, const TCHAR* ValidationMessage)
+		{
+			AddExpectedError(
+				FString::Printf(TEXT("Graph validation error: %s"), ValidationMessage),
+				EAutomationExpectedErrorFlags::Exact, 1, false);
+			UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+			const FResolverSnapshot Before(Resolver);
+			TestInit(*this, What, Resolver->Initialize(Graph), ECadenceArcResolverInitResult::InvalidGraph);
+			Before.ExpectUnchanged(*this, Resolver);
+			TestFalse(TEXT("Invalid shared validation leaves resolver uninitialized"), Resolver->IsInitialized());
+		};
+
+		UCadenceArcGraph* MissingTargetGraph = MakeValidGraph();
+		MissingTargetGraph->Nodes[0].Transitions[0].TargetActionTag = Input_Light;
+		ExpectInvalidInitialization(
+			TEXT("Missing transition target is rejected by shared validation"), MissingTargetGraph,
+			TEXT("Transition at index 0 in node 'CadenceArc.Automation.Action.Root' (index 0) has a TargetActionTag 'CadenceArc.Automation.Input.Light' that does not exist in the nodes."));
+
+		UCadenceArcGraph* InvalidPhaseGraph = MakeValidGraph();
+		InvalidPhaseGraph->Nodes[0].Transitions[0].InputPhase = static_cast<ECadenceArcInputPhase>(255);
+		ExpectInvalidInitialization(
+			TEXT("Unknown input phase is rejected by shared validation"), InvalidPhaseGraph,
+			TEXT("Node at index 0: Node 'CadenceArc.Automation.Action.Root': Transition at index 0 has an invalid InputPhase."));
+
+		UCadenceArcGraph* InvalidRangeGraph = MakeValidGraph();
+		FCadenceArcTransition& InvalidRange = InvalidRangeGraph->Nodes[0].Transitions[0];
+		InvalidRange.InputPhase = ECadenceArcInputPhase::Released;
+		InvalidRange.bUseDurationRange = true;
+		InvalidRange.DurationRange.MinHeldDurationSeconds = -1.0;
+		ExpectInvalidInitialization(
+			TEXT("Invalid released duration range is rejected by shared validation"), InvalidRangeGraph,
+			TEXT("Node at index 0: Node 'CadenceArc.Automation.Action.Root': Transition at index 0 has an invalid duration range."));
+
+		UCadenceArcGraph* OverlapGraph = MakeValidGraph();
+		OverlapGraph->Nodes[0].Transitions.Reset();
+		FCadenceArcTransition& FirstOverlap = OverlapGraph->Nodes[0].Transitions.AddDefaulted_GetRef();
+		FirstOverlap.InputTag = Input_Light;
+		FirstOverlap.TargetActionTag = Action_Light01;
+		FirstOverlap.InputPhase = ECadenceArcInputPhase::Released;
+		FCadenceArcTransition& SecondOverlap = OverlapGraph->Nodes[0].Transitions.AddDefaulted_GetRef();
+		SecondOverlap.InputTag = Input_Light;
+		SecondOverlap.TargetActionTag = Action_Heavy01;
+		SecondOverlap.InputPhase = ECadenceArcInputPhase::Released;
+		ExpectInvalidInitialization(
+			TEXT("Overlapping released ranges are rejected by shared validation"), OverlapGraph,
+			TEXT("Node at index 0: Node 'CadenceArc.Automation.Action.Root': Transitions at indices 0 and 1 overlap for InputTag 'CadenceArc.Automation.Input.Light' and InputPhase 1."));
+
+		UCadenceArcGraph* InvalidConfigGraph = MakeValidGraph();
+		InvalidConfigGraph->Nodes[0].Transitions.Reset();
+		FCadenceArcTransition& LongOnlyTransition = InvalidConfigGraph->Nodes[0].Transitions.AddDefaulted_GetRef();
+		LongOnlyTransition.InputTag = Input_Light;
+		LongOnlyTransition.TargetActionTag = Action_Light01;
+		LongOnlyTransition.InputPhase = ECadenceArcInputPhase::Released;
+		LongOnlyTransition.bUseDurationRange = true;
+		LongOnlyTransition.DurationRange.MinHeldDurationSeconds = 1.0;
+		InvalidConfigGraph->Nodes[0].ReleaseGestureConfig.Add({Input_Light, -1.0, 0.0});
+		ExpectInvalidInitialization(
+			TEXT("Invalid gesture configuration is rejected by shared validation"), InvalidConfigGraph,
+			TEXT("Node at index 0: Node 'CadenceArc.Automation.Action.Root': ReleaseGestureConfig at index 0 has invalid fields."));
+
+		// 相邻档位、同输入不同阶段、以及仅长按，都是图层允许的配置；Resolver 尚不在这里选择时长档位。
+		UCadenceArcGraph* AdjacentGraph = MakeValidGraph();
+		AdjacentGraph->Nodes[0].Transitions.Reset();
+		FCadenceArcTransition& ShortTier = AdjacentGraph->Nodes[0].Transitions.AddDefaulted_GetRef();
+		ShortTier.InputTag = Input_Light;
+		ShortTier.TargetActionTag = Action_Light01;
+		ShortTier.InputPhase = ECadenceArcInputPhase::Released;
+		ShortTier.bUseDurationRange = true;
+		ShortTier.DurationRange.bHasMaxHeldDuration = true;
+		ShortTier.DurationRange.MaxHeldDurationSecondsExclusive = 1.0;
+		FCadenceArcTransition& LongTier = AdjacentGraph->Nodes[0].Transitions.AddDefaulted_GetRef();
+		LongTier.InputTag = Input_Light;
+		LongTier.TargetActionTag = Action_Heavy01;
+		LongTier.InputPhase = ECadenceArcInputPhase::Released;
+		LongTier.bUseDurationRange = true;
+		LongTier.DurationRange.MinHeldDurationSeconds = 1.0;
+		TestInit(*this, TEXT("Adjacent released tiers initialize"),
+			NewObject<UCadenceArcResolver>()->Initialize(AdjacentGraph),
+			ECadenceArcResolverInitResult::Success);
+
+		UCadenceArcGraph* DifferentPhaseGraph = MakeValidGraph();
+		FCadenceArcTransition& ReleasedLight = DifferentPhaseGraph->Nodes[0].Transitions[1];
+		ReleasedLight.InputTag = Input_Light;
+		ReleasedLight.InputPhase = ECadenceArcInputPhase::Released;
+		ReleasedLight.bUseDurationRange = true;
+		ReleasedLight.DurationRange.MinHeldDurationSeconds = 1.0;
+		TestInit(*this, TEXT("Same input in different phases initializes"),
+			NewObject<UCadenceArcResolver>()->Initialize(DifferentPhaseGraph), ECadenceArcResolverInitResult::Success);
+
+		UCadenceArcGraph* LongOnlyGraph = MakeValidGraph();
+		LongOnlyGraph->Nodes[0].Transitions.Reset();
+		FCadenceArcTransition& LongOnly = LongOnlyGraph->Nodes[0].Transitions.AddDefaulted_GetRef();
+		LongOnly.InputTag = Input_Light;
+		LongOnly.TargetActionTag = Action_Light01;
+		LongOnly.InputPhase = ECadenceArcInputPhase::Released;
+		LongOnly.bUseDurationRange = true;
+		LongOnly.DurationRange.MinHeldDurationSeconds = 1.0;
+		TestInit(*this, TEXT("Long-only released configuration initializes"),
+			NewObject<UCadenceArcResolver>()->Initialize(LongOnlyGraph), ECadenceArcResolverInitResult::Success);
+
+		UCadenceArcResolver* ReadyResolver = NewObject<UCadenceArcResolver>();
+		ReadyResolver->Initialize(MakeValidGraph());
+		FCadenceArcActionRequest FirstRequest;
+		ResolveAndExpect(*this, ReadyResolver, Input_Light, Action_Root, Action_Light01, FirstRequest,
+			TEXT("Original graph request before failed reinitialize"));
+		ReadyResolver->NotifyActionRejected(FirstRequest.RequestId);
+		const FResolverSnapshot ReadyBefore(ReadyResolver);
+		UCadenceArcGraph* ReinitializeInvalidGraph = MakeValidGraph();
+		ReinitializeInvalidGraph->Nodes[0].Transitions[0].InputPhase = static_cast<ECadenceArcInputPhase>(255);
+		ReinitializeInvalidGraph->Nodes[0].Transitions[0].TargetActionTag = Action_Heavy01;
+		AddExpectedError(TEXT("Graph validation error: Node at index 0: Node 'CadenceArc.Automation.Action.Root': Transition at index 0 has an invalid InputPhase."),
+			EAutomationExpectedErrorFlags::Exact, 1, false);
+		TestInit(*this, TEXT("Ready reinitialize rejects invalid shared graph"),
+			ReadyResolver->Initialize(ReinitializeInvalidGraph), ECadenceArcResolverInitResult::InvalidGraph);
+		ReadyBefore.ExpectUnchanged(*this, ReadyResolver);
+		FCadenceArcActionRequest NextRequest;
+		ResolveAndExpect(*this, ReadyResolver, Input_Light, Action_Root, Action_Light01, NextRequest,
+			TEXT("Failed reinitialize retains original graph behavior"));
+		TestEqual(TEXT("Failed reinitialize preserves request counter"), NextRequest.RequestId, FirstRequest.RequestId + 1);
+
+		UCadenceArcResolver* BusyResolver = NewObject<UCadenceArcResolver>();
+		BusyResolver->Initialize(MakeValidGraph());
+		FCadenceArcActionRequest BusyRequest;
+		ResolveAndExpect(*this, BusyResolver, Input_Light, Action_Root, Action_Light01, BusyRequest,
+			TEXT("Executing state before busy initialize"));
+		StartAndExpect(*this, BusyResolver, BusyRequest, TEXT("Executing state before busy initialize"));
+		BusyResolver->OpenBufferWindow(BusyRequest.RequestId);
+		FCadenceArcActionRequest IgnoredRequest;
+		TestTransition(*this, TEXT("Input is buffered before busy initialize"),
+			SubmitForTest(BusyResolver, MakeInput(Input_Heavy), IgnoredRequest),
+			ExpectedResolution(ECadenceArcResolutionCategory::Buffered, ECadenceArcResolutionReason::None));
+		const FResolverSnapshot ExecutingBefore(BusyResolver);
+		TestInit(*this, TEXT("Busy initialize wins before graph validation"),
+			BusyResolver->Initialize(InvalidPhaseGraph), ECadenceArcResolverInitResult::UnexpectedState);
+		ExecutingBefore.ExpectUnchanged(*this, BusyResolver);
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 		FCadenceArcValidBranchesTest,
 		"CadenceArc.Resolver.Resolve.ValidBranches",
 		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

@@ -1,13 +1,15 @@
 #include "Resolver/CadenceArcResolver.h"
 #include "Graph/CadenceArcGraph.h"
 
+DEFINE_LOG_CATEGORY(LogCadenceArc);
+
 ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* InGraph)
 {
 	if (State == ECadenceArcResolverState::AwaitingStart || State == ECadenceArcResolverState::Executing)
 	{
 		return ECadenceArcResolverInitResult::UnexpectedState;
 	}
-	if (!IsValid(InGraph) || InGraph->MaxBufferedInputAgeSeconds < 0.0 
+	if (!IsValid(InGraph) || InGraph->MaxBufferedInputAgeSeconds < 0.0
 		|| !FMath::IsFinite(InGraph->MaxBufferedInputAgeSeconds))
 	{
 		return ECadenceArcResolverInitResult::InvalidGraph;
@@ -22,9 +24,13 @@ ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* 
 	{
 		return ECadenceArcResolverInitResult::EntryNodeNotFound;
 	}
-	TArray<FText> ValidationErrors;
-	if (!InGraph->ValidateGraph(ValidationErrors))
+	if (TArray<FText> ValidationErrors; !InGraph->ValidateGraph(ValidationErrors))
 	{
+		// print validation errors to log for debugging
+		for (const FText& Error : ValidationErrors)
+		{
+			UE_LOG(LogCadenceArc, Error, TEXT("Graph validation error: %s"), *Error.ToString());
+		}
 		return ECadenceArcResolverInitResult::InvalidGraph;
 	}
 	Graph = InGraph;

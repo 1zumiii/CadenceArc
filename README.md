@@ -43,7 +43,9 @@ The current milestone provides:
 
 Phase 6 graph configuration now supports input phases and half-open held-duration ranges, including multiple release tiers. `FCadenceArcNode::IsValidTransition` validates local ranges and gesture configuration; `UCadenceArcGraph::ValidateGraph` adds topology checks and is also used by editor asset validation. Adjacent ranges and gaps are allowed; overlapping ranges are rejected. An optional, single timing configuration per node/input tag uses the unbounded highest tier's minimum as the full-charge threshold. A short-attack companion edge is not required.
 
-The resolver still resolves by input tag: initialization has not yet been connected to the complete graph validator, and held-duration selection, gesture protection, and automatic release are not implemented. Do not use multi-tier graph configuration as an executable resolver feature yet. Production execution adapters and networking remain future work. A temporary Enhanced Input and Timer adapter lives in CadenceArcSandbox.
+Resolver initialization now uses the complete graph validator before replacing any state. Busy, invalid-object/age-limit, invalid-entry-tag, and missing-entry-node checks retain their existing return precedence. A failed graph validation returns `InvalidGraph` and preserves the previous configuration and runtime state.
+
+The resolver still resolves by input tag; held-duration selection, gesture protection, and automatic release are not implemented. Do not use multi-tier graph configuration as an executable resolver feature yet. Production execution adapters and networking remain future work. A temporary Enhanced Input and Timer adapter lives in CadenceArcSandbox.
 
 ## Why the Handshake Exists
 
@@ -157,11 +159,11 @@ The Sandbox's C++ executor already owns input and lifecycle handling. Blueprint 
 
 ## Editor Graph Validation
 
-`UCadenceArcGraph::IsDataValid` integrates with Unreal's asset validation under `WITH_EDITOR`. It reports empty graphs, invalid or duplicate node tags, invalid or missing entry nodes, invalid age limits, invalid transition tags, missing targets, and duplicate input tags within a source node.
+`UCadenceArcGraph::IsDataValid` integrates with Unreal's asset validation under `WITH_EDITOR`. It reports empty graphs, invalid or duplicate node tags, invalid or missing entry nodes, invalid age limits, invalid transition tags, missing targets, invalid phases/ranges, overlapping transitions within a source/input/phase group, and invalid gesture configuration. Pressed and Released transitions may share an input tag; Released ranges may be adjacent or have gaps.
 
 Validation collects diagnostics without modifying the asset and emits them in deterministic array order. A valid graph returns `Valid`, while errors return `Invalid`. Forward references, self-loops, cycles, terminal nodes, and reuse of an input tag across different nodes are allowed. Reachability analysis and conditional-edge priorities are not implemented.
 
-Editor validation does not replace runtime guards. Runtime initialization checks the graph, age limit, and entry node; resolution still checks the current and target nodes. No `UnrealEd` dependency is added to the runtime module.
+Editor validation and runtime initialization use the same graph validator. Resolution still checks the current and target nodes to handle graph changes after initialization. No `UnrealEd` dependency is added to the runtime module.
 
 ## Runtime Model
 

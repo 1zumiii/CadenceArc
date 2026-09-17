@@ -245,3 +245,4 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
 	ECadenceArcResolutionReason Reason = ECadenceArcResolutionReason::None;
 };
+

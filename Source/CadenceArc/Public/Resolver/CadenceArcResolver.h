@@ -8,6 +8,7 @@
 
 class UCadenceArcGraph;
 
+DECLARE_LOG_CATEGORY_EXTERN(LogCadenceArc, Log, All);
 /**
  * Resolves semantic input tags through a configured action graph and coordinates
  * action execution through an explicit request/lifecycle handshake.
@@ -18,6 +19,14 @@ class CADENCEARC_API UCadenceArcResolver : public UObject
 	GENERATED_BODY()
 
 private:
+	// 内部使用
+	enum class ECadenceArcInputSlotState :uint8
+	{
+		Empty = 0,
+		PendingGesture,
+		ResolvedEvent
+	};
+
 	UPROPERTY(Transient)
 	TObjectPtr<UCadenceArcGraph> Graph;
 	UPROPERTY(Transient)
