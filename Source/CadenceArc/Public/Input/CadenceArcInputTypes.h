@@ -14,16 +14,23 @@ enum class ECadenceArcInputPhase : uint8
 UENUM(BlueprintType)
 enum class ECadenceArcInputMode : uint8
 {
+	// 按下时直接提交输入，不等待松手来判定持续时间。
 	PressOnly = 0,
-	ReleaseGesture
+	// 按下时申请保持资格，在手动或自动释放时按持续时间结算；短按也属于此模式。
+	HoldRelease
 };
 
+// Resolver 中有效按住资格的观察阶段，由时间和可选蓄力配置推导。
 UENUM(BlueprintType)
-enum class ECadenceArcGestureStage : uint8
+enum class ECadenceArcHoldStage : uint8
 {
+	// 没有有效的按住资格；不代表设备当前一定处于松开状态。
 	None = 0,
-	PendingTap,
+	// 已取得资格但尚未进入蓄力；无蓄力配置时保持此阶段，允许普通输入覆盖。
+	Holding,
+	// 已达到蓄力起点但尚未蓄满，资格受保护，普通输入不能覆盖。
 	Charging,
+	// 已达到最高档门槛，资格仍受保护，等待手动释放或保持上限触发自动释放。
 	Charged
 };
 

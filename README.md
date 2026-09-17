@@ -18,34 +18,23 @@ The name reflects the long-term design: player **cadence** shapes an **arc** thr
 
 ## Status
 
-CadenceArc is currently at `0.3.0-alpha`. Its runtime API and asset format may change before the first stable release.
+CadenceArc is `0.3.0-alpha` and experimental. The runtime API and asset format may change before the first stable release; see [Migration Notes](#migration-notes) for breaking changes in the development branch.
 
-The current development checkout completes Phase 5 (explicit time and optional buffered-input expiry), followed by editor graph validation. The descriptor version above has not been bumped as part of this documentation update. The Phase 5 input and completion signatures are breaking changes from the original `0.3.0-alpha` API.
-
-The development public result API uses private fields with const C++ getters, four resolution categories, and separate diagnostic reasons. The Blueprint Function Library provides read-only access. Cold editor build and all 31 automated tests passed on 2026-09-09; the user reported both Blueprint acceptance routes successful. Demo logging and invalid enum redirects have been corrected. These checks do not establish compatibility with every historical Blueprint asset.
-
-The current milestone provides:
+Available now:
 
 - configurable action graphs backed by a `UDataAsset`;
 - deterministic `InputTag -> ActionTag` transition resolution;
-- explicit resolver states;
+- explicit resolver states and a two-phase resolve/commit handshake;
 - request IDs that correlate asynchronous execution callbacks;
-- two-phase resolution and execution commit;
 - rejection, completion, cancellation, and interruption handling;
-- a RequestId-protected input window;
-- a single-slot, Last Input Wins input buffer;
-- automatic buffered-input resolution when an action completes;
-- structured completion outcomes containing handshake and buffer-consumption results;
-- caller-supplied timestamps and optional graph-wide buffered-input expiry;
-- editor asset validation with deterministic, actionable diagnostics;
-- Blueprint-accessible data and resolver APIs;
+- a RequestId-protected input window with a single-slot, Last Input Wins buffer;
+- caller-supplied timestamps and optional buffered-input expiry;
+- structured, read-only result types with Blueprint accessors;
+- shared graph validation for editor assets and resolver initialization;
+- a physical press/release tracker (`FCadenceArcInputTracker`);
 - memory-only Unreal Automation Tests.
 
-Phase 6 graph configuration now supports input phases and half-open held-duration ranges, including multiple release tiers. `FCadenceArcNode::IsValidTransition` validates local ranges and gesture configuration; `UCadenceArcGraph::ValidateGraph` adds topology checks and is also used by editor asset validation. Adjacent ranges and gaps are allowed; overlapping ranges are rejected. An optional, single timing configuration per node/input tag uses the unbounded highest tier's minimum as the full-charge threshold. A short-attack companion edge is not required.
-
-Resolver initialization now uses the complete graph validator before replacing any state. Busy, invalid-object/age-limit, invalid-entry-tag, and missing-entry-node checks retain their existing return precedence. A failed graph validation returns `InvalidGraph` and preserves the previous configuration and runtime state.
-
-The resolver still resolves by input tag; held-duration selection, gesture protection, and automatic release are not implemented. Do not use multi-tier graph configuration as an executable resolver feature yet. Production execution adapters and networking remain future work. A temporary Enhanced Input and Timer adapter lives in CadenceArcSandbox.
+In progress (Phase 6, Hold input): graphs can already describe input phases, held-duration ranges, and optional charge timing, and these are validated. The resolver still selects transitions by input tag only; duration-based selection, hold protection, and automatic release are not implemented yet. Do not rely on multi-tier Hold configuration at runtime.
 
 ## Why the Handshake Exists
 
@@ -65,7 +54,7 @@ The resolver never assumes that an emitted action was successfully executed.
 
 ## Input Buffering
 
-`SubmitInput` validates the input tag and a finite, nonnegative timestamp before accepting an input. Zero is valid; invalid timestamps return `InvalidTimestamp` without replacing a valid buffer. For valid events it has state-dependent behavior:
+`SubmitInput` validates the input tag and a finite, nonnegative timestamp before accepting an input. Zero is valid; invalid timestamps return `InvalidTimestamp` without replacing a valid buffer. For valid events the behavior depends on resolver state:
 
 | Resolver state | Buffer window | Result |
 | --- | --- | --- |
@@ -74,15 +63,15 @@ The resolver never assumes that an emitted action was successfully executed.
 | `Executing` | Open | Stores the input and returns `Buffered / None`; a later valid input overwrites it. |
 | `Executing` | Closed | Returns `NoAction / BufferWindowClosed` without changing the stored input. |
 
-The external executor controls the timing window with `OpenBufferWindow(RequestId)` and `CloseBufferWindow(RequestId)`. Both calls require the current executing request ID, making stale animation or state-machine notifications harmless. Closing a window freezes the stored input rather than clearing it.
+The external executor controls the window with `OpenBufferWindow(RequestId)` and `CloseBufferWindow(RequestId)`. Both require the current executing request ID, so stale animation or state-machine notifications are harmless. Closing a window freezes the stored input rather than clearing it.
 
 When the current action completes, `NotifyActionCompleted` returns an `FCadenceArcActionCompletionOutcome`:
 
-- `GetHandshakeResult()` reports whether the completion callback matched the active request;
-- `GetBufferConsumption()` and `GetBufferConsumptionReason()` report the resolution category and diagnostic reason, meaningful only after a successful handshake;
+- `GetHandshakeResult()` reports whether the callback matched the active request;
+- `GetBufferConsumption()` and `GetBufferConsumptionReason()` report the resolution category and reason, meaningful only after a successful handshake;
 - `GetNextActionRequest()` returns a copy of the next request when `HasNextActionRequest()` is true.
 
-A successfully consumed input moves the resolver directly to `AwaitingStart`. The next target action is still not committed until the external executor reports `NotifyActionStarted`.
+A consumed input moves the resolver directly to `AwaitingStart`. The next target action is still not committed until the executor reports `NotifyActionStarted`.
 
 ## Explicit Time and Expiry
 
@@ -97,37 +86,35 @@ FCadenceArcActionCompletionOutcome NotifyActionCompleted(
     double CompletionTimestampSeconds);
 ```
 
-`FCadenceArcInputEvent` contains `InputTag` and `double TimestampSeconds`. Input and completion timestamps must use the same nondecreasing time domain, measured in seconds. The resolver does not read `UWorld`, platform time, or frame ticks, and timestamps must not be multiplied by frame rate or delta time. It validates the completion-to-buffer relationship; it does not maintain a global clock or validate the ordering of every submitted event.
+`FCadenceArcInputEvent` carries `InputTag` and `double TimestampSeconds`, plus the Phase 6 fields `InputPhase` and `HeldDurationSeconds`. Input and completion timestamps must share one nondecreasing time domain, in seconds. The resolver never reads `UWorld`, platform time, or frame ticks; do not scale timestamps by frame rate or delta time. Choosing a consistent time domain (for example World game time, which pauses and follows time dilation) is the adapter's responsibility.
 
-Sandbox supplies World game time; memory-only tests supply fixed values. Game time pauses with the world and follows time dilation. Selecting another consistent time domain is the adapter's responsibility.
-
-`UCadenceArcGraph::MaxBufferedInputAgeSeconds` defaults to `0.0`, which disables the age limit. Initialization rejects negative or non-finite limits as `InvalidGraph`, without replacing an existing valid configuration. Last Input Wins replaces both the tag and timestamp; closing the window preserves both.
+`UCadenceArcGraph::MaxBufferedInputAgeSeconds` defaults to `0.0`, which disables the age limit. Initialization rejects negative or non-finite limits as `InvalidGraph`. Last Input Wins replaces both tag and timestamp; closing the window preserves both.
 
 After a successful completion handshake:
 
 | Condition | Buffer result | Resulting state |
 | --- | --- | --- |
-| No buffered input | `NoAction / NoBufferedInput`; completion time is irrelevant | `Ready` |
+| No buffered input | `NoAction / NoBufferedInput` | `Ready` |
 | Completion time is non-finite, negative, or earlier than the buffered input | `Rejected / InvalidCompletionTime` | `Ready` |
-| Age limit is enabled and `CompletionTimestampSeconds - TimestampSeconds > MaxBufferedInputAgeSeconds` | `NoAction / Expired` | `Ready` |
-| Input is within the limit, or the limit is disabled | Resolve the buffered tag | `AwaitingStart` on success; otherwise `Ready` |
+| Age limit enabled and `CompletionTimestampSeconds - TimestampSeconds > MaxBufferedInputAgeSeconds` | `NoAction / Expired` | `Ready` |
+| Within the limit, or limit disabled | Resolve the buffered input | `AwaitingStart` on success; otherwise `Ready` |
 
-An age exactly equal to the limit remains valid. Disabling expiry skips only the age-limit comparison; timestamp validation still applies. `InvalidCompletionTime` and `Expired` finish the old action, clear its request, window, and buffer, and preserve the committed node. They emit no next request and keep `HandshakeResult = Success`. A failed handshake leaves all resolver state unchanged. Its default consumption fields (`Rejected / None`) mean consumption was not attempted; there is no public `NotAttempted` enum value.
+An age exactly equal to the limit is still valid. `InvalidCompletionTime` and `Expired` finish the old action, clear its request, window, and buffer, keep the committed node, and emit no next request. A failed handshake leaves all resolver state unchanged; its default consumption fields (`Rejected / None`) mean consumption was not attempted.
 
-## Public Results and Migration
+## Public Results
 
-`FCadenceArcSubmitOutcome` exposes `GetCategory()`, `GetReason()`, `GetActionRequest()`, and `HasActionRequest()`. Request getters return copies. The Resolver constructs outcomes through private setters; consumers use the read-only interface.
+`FCadenceArcSubmitOutcome` exposes `GetCategory()`, `GetReason()`, `GetActionRequest()`, and `HasActionRequest()`. Fields are private; request getters return copies.
 
 | Category | Meaning | Request |
 | --- | --- | --- |
 | `RequestProduced` | A candidate transition exists; `Reason` is `None`. | Candidate, awaiting Started |
-| `Buffered` | The complete input replaced the single buffer slot; `Reason` is `None`. | Empty |
-| `NoAction` | No transition now: e.g. `RequestPending`, `BufferWindowClosed`, `NoMatchingTransition`. | Empty |
+| `Buffered` | The input replaced the single buffer slot; `Reason` is `None`. | Empty |
+| `NoAction` | No transition now, e.g. `RequestPending`, `BufferWindowClosed`, `NoMatchingTransition`. | Empty |
 | `Rejected` | Invalid call or graph data; inspect `Reason`. | Empty |
 
-Default-constructed outcomes do not indicate success. Empty requests have ID zero and all tags empty. `HasActionRequest()` checks `RequestProduced`; `HasNextActionRequest()` additionally requires a successful completion handshake. Do not infer success from the ID alone.
+Default-constructed outcomes never indicate success, and empty requests have ID zero and empty tags. Branch on `HasActionRequest()` / `HasNextActionRequest()` rather than on request IDs; use `Reason` for diagnostics.
 
-The following fragments belong in an external executor; `StartRequest` represents the host's execution routine:
+A minimal external executor:
 
 ```cpp
 const FCadenceArcSubmitOutcome Submit = Resolver->SubmitInput(InputEvent);
@@ -144,26 +131,26 @@ if (Completion.HasNextActionRequest())
 }
 ```
 
-`StartRequest` checks execution prerequisites, rejects a candidate with `NotifyActionRejected` when necessary, and calls `NotifyActionStarted(RequestId)`. Only after `ECadenceArcHandshakeResult::Success` may it begin execution and report "started". A refused completion is logged using its handshake result; consumption category/reason are logged only after an accepted completion.
+`StartRequest` is the host's routine. It checks execution prerequisites, calls `NotifyActionRejected` when the action cannot run, and otherwise calls `NotifyActionStarted(RequestId)`. Execution begins only after that call returns `ECadenceArcHandshakeResult::Success`.
 
-Migration from earlier development APIs:
+`UCadenceArcBlueprintLibrary` exposes the outcome getters and `Has*` checks as BlueprintPure nodes.
 
-- Replace the old two-argument `SubmitInput` and its output parameter with the returned submit outcome.
-- Replace `ECadenceArcInputResult` comparisons with category/reason checks. Use the request inside the outcome.
-- Replace `BufferConsumeResult` with the completion category/reason getters; gate them on the handshake result. Old `Resolved` means `RequestProduced / None`, `InvalidTime` means `Rejected / InvalidCompletionTime`, and `Expired` means `NoAction / Expired`.
-- Compare `Reset()` explicitly with `ECadenceArcResolverResetResult::Success`; it now returns `Success`, `NotInitialized`, or `Busy`, not bool. Initialization's former `Busy` is now `UnexpectedState`.
-- Outcome C++ fields are private. Update direct field access to getters; do not add test friends or bypass access control.
-- Blueprint users must refresh/reconnect affected signatures and compile their assets. Historical redirects alone cannot convert an enum output into an outcome structure. Invalid duplicate redirects targeting the removed `ECadenceArcInputResult` have been removed; old enum-based nodes require manual migration to category/reason handling. Automatic migration of historical assets is not guaranteed.
+## Hold Input (Phase 6)
 
-The Sandbox's C++ executor already owns input and lifecycle handling. Blueprint API acceptance uses an independent small test Actor and Resolver, without recreating that executor or adding duplicate input bindings. Outcome getter/Has methods are ordinary C++ methods; UCadenceArcBlueprintLibrary exposes nine BlueprintPure wrappers that forward to them. The user reported the two Blueprint test routes successful; the C++ suite remains separate evidence.
+A **Hold** is one press-to-release sequence identified by an `FCadenceArcInputToken`. An immediate release is still a Hold; the name does not imply that a long-press threshold was reached. `FCadenceArcInputTracker` owns physical press/release pairing and measures held duration; the resolver will own the qualification to resolve that input.
+
+- `ECadenceArcInputMode::PressOnly` submits on press. `HoldRelease` requests qualification on press and settles on manual or automatic release.
+- `ECadenceArcHoldStage` is `None`, `Holding`, `Charging`, or `Charged`. Stages are derived from time, not stored. `Holding` means qualified but not charging, including holds without charge configuration.
+- Transitions may set `InputPhase` and a half-open `DurationRange` (`[Min, Max)`, or unbounded). Ranges for the same source, tag, and phase must not overlap; adjacent ranges and gaps are allowed, so multiple release tiers can be expressed.
+- `FCadenceArcHoldChargeConfig` in `FCadenceArcNode::HoldChargeConfigs` optionally adds charge protection and auto-release timing for one input tag. The full-charge threshold is the minimum of that tag's single unbounded Released range.
+
+Planned resolver APIs: `BeginInputHold`, `ReleaseInputHold`, `CancelInputHold`, `AdvanceInputTime`, and `GetInputHoldSnapshot`.
 
 ## Editor Graph Validation
 
-`UCadenceArcGraph::IsDataValid` integrates with Unreal's asset validation under `WITH_EDITOR`. It reports empty graphs, invalid or duplicate node tags, invalid or missing entry nodes, invalid age limits, invalid transition tags, missing targets, invalid phases/ranges, overlapping transitions within a source/input/phase group, and invalid gesture configuration. Pressed and Released transitions may share an input tag; Released ranges may be adjacent or have gaps.
+`UCadenceArcGraph::ValidateGraph` is shared by editor asset validation (`IsDataValid`, under `WITH_EDITOR`) and `UCadenceArcResolver::Initialize`. It reports empty graphs, invalid or duplicate node tags, invalid or missing entry nodes, invalid age limits, invalid transition tags, missing targets, invalid phases or ranges, overlapping transitions, and invalid hold charge configuration.
 
-Validation collects diagnostics without modifying the asset and emits them in deterministic array order. A valid graph returns `Valid`, while errors return `Invalid`. Forward references, self-loops, cycles, terminal nodes, and reuse of an input tag across different nodes are allowed. Reachability analysis and conditional-edge priorities are not implemented.
-
-Editor validation and runtime initialization use the same graph validator. Resolution still checks the current and target nodes to handle graph changes after initialization. No `UnrealEd` dependency is added to the runtime module.
+Validation never modifies the asset and emits diagnostics in deterministic array order. Initialization validates before replacing any state; failures return `InvalidGraph` and keep the previous configuration. Forward references, self-loops, cycles, terminal nodes, and reusing an input tag across nodes are allowed. Reachability analysis and edge priorities are not implemented. Resolution still checks current and target nodes at runtime, since graphs can change after initialization.
 
 ## Runtime Model
 
@@ -173,10 +160,13 @@ Editor validation and runtime initialization use the same graph validator. Resol
 
 - `InputTag`
 - `TargetActionTag`
+- `InputPhase`
+- `bUseDurationRange` and `DurationRange`
 
 `FCadenceArcNode`
 
 - `ActionTag`
+- `HoldChargeConfigs`
 - `Transitions`
 
 `UCadenceArcGraph`
@@ -196,7 +186,7 @@ The entry node may use a non-executable root tag that only represents the initia
 - `SourceActionTag` -- the current node when resolution occurred;
 - `TargetActionTag` -- the candidate action selected by the graph.
 
-Request IDs are not reset by `Reset` or reinitialization, preventing stale asynchronous callbacks from matching a newer request.
+Request IDs are never reset by `Reset` or reinitialization, so stale asynchronous callbacks cannot match a newer request.
 
 ### Resolver states
 
@@ -207,7 +197,7 @@ Request IDs are not reset by `Reset` or reinitialization, preventing stale async
 | `AwaitingStart` | A request exists and awaits acceptance or rejection. |
 | `Executing` | The external executor confirmed that the requested action started. |
 
-Only one outstanding request exists at a time in the current model.
+Only one outstanding request exists at a time.
 
 ### Lifecycle contract
 
@@ -215,12 +205,12 @@ Only one outstanding request exists at a time in the current model.
 | --- | --- | --- |
 | `SubmitInput` resolves | `Ready` | Creates a request and enters `AwaitingStart`; current action is unchanged. |
 | `NotifyActionStarted` | `AwaitingStart` | Commits the target action and enters `Executing`. |
-| `NotifyActionRejected` | `AwaitingStart` | Returns to `Ready`, preserves the source action, and clears the request. |
-| `NotifyActionCompleted` | `Executing` | Preserves the committed action, consumes the buffer, then enters `Ready` or emits the next request and enters `AwaitingStart`. |
+| `NotifyActionRejected` | `AwaitingStart` | Returns to `Ready`, keeps the source action, and clears the request. |
+| `NotifyActionCompleted` | `Executing` | Keeps the committed action, consumes the buffer, then enters `Ready` or emits the next request and enters `AwaitingStart`. |
 | `NotifyActionCancelled` | `Executing` | Returns to `Ready`, resets to the entry action, and clears the request. |
 | `NotifyActionInterrupted` | `Executing` | Returns to `Ready`, resets to the entry action, and clears the request. |
 
-Invalid request IDs, stale callbacks, and callbacks received in the wrong state are rejected without mutating resolver state.
+`Reset()` is only allowed in `Ready` and returns `Success`, `NotInitialized`, or `Busy`. Invalid request IDs, stale callbacks, and callbacks in the wrong state are rejected without mutating resolver state.
 
 ## Architectural Boundary
 
@@ -230,15 +220,16 @@ The core runtime module depends on Unreal Engine fundamentals and Gameplay Tags.
 - animation montages;
 - a particular character or weapon class;
 - collision or damage systems;
-- the WarriorRPG project.
+- any specific game project.
 
-External systems consume `TargetActionTag` and report lifecycle events. GAS is one possible adapter, not a requirement of the core framework.
+External systems consume `TargetActionTag` and report lifecycle events. GAS is one possible adapter, not a requirement.
 
 ## Repository Layout
 
 ```text
 CadenceArc/
 |-- CadenceArc.uplugin
+|-- Config/
 |-- Content/
 |-- Resources/
 `-- Source/
@@ -246,9 +237,11 @@ CadenceArc/
         |-- CadenceArc.Build.cs
         |-- Public/
         |   |-- Graph/
+        |   |-- Input/
         |   `-- Resolver/
         `-- Private/
             |-- Graph/
+            |-- Input/
             |-- Resolver/
             `-- Tests/
 ```
@@ -257,37 +250,18 @@ CadenceArc is developed and validated through the separate [CadenceArcSandbox](h
 
 ## Testing
 
-The editor suite contains 31 Unreal Automation Tests: 25 resolver tests and 6 editor graph-validation groups. The tests are organized under `Source/CadenceArc/Private/Tests/`:
+Tests live under `Source/CadenceArc/Private/Tests/` and build graphs in memory, without project assets:
 
-- `CadenceArcTestSupport.h/.cpp`: shared graph fixtures, tags, assertions, and time helpers;
-- `Resolver/CadenceArcResolverContractTests.cpp`: public outcomes, initialization, resolution, branches, and request IDs;
-- `Resolver/CadenceArcResolverBufferTests.cpp`: buffer windows, replacement, and consumption;
-- `Resolver/CadenceArcResolverLifecycleTests.cpp`: lifecycle callbacks, cancellation, interruption, and reset;
-- `Resolver/CadenceArcResolverTimeTests.cpp`: timestamps and buffer expiry;
-- `Graph/CadenceArcGraphValidationTests.cpp`: editor graph validation.
+- `CadenceArcTestSupport.h/.cpp` -- shared fixtures, tags, assertions, and time helpers;
+- `Resolver/CadenceArcResolverContractTests.cpp` -- public outcomes, initialization, resolution, branches, and request IDs;
+- `Resolver/CadenceArcResolverBufferTests.cpp` -- buffer windows, replacement, and consumption;
+- `Resolver/CadenceArcResolverLifecycleTests.cpp` -- lifecycle callbacks, cancellation, interruption, and reset;
+- `Resolver/CadenceArcResolverTimeTests.cpp` -- timestamps and buffer expiry;
+- `Graph/CadenceArcGraphValidationTests.cpp` -- graph topology validation;
+- `Graph/CadenceArcHoldValidationTests.cpp` -- phases, duration ranges, charge configuration, and naming redirects;
+- `Input/CadenceArcInputTrackerTests.cpp` -- press/release pairing, duration, tokens, and cleanup.
 
-Coverage includes:
-
-- graph initialization and failure atomicity;
-- public outcome categories and reasons, default values, request availability, and request-getter copy isolation;
-- action request creation;
-- valid light, heavy, and finisher branches;
-- pending and executing state guards;
-- every lifecycle callback;
-- cancellation and interruption recovery;
-- invalid, stale, and out-of-order callbacks;
-- buffer-window RequestId validation and idempotent open/close behavior;
-- single-slot buffering and Last Input Wins replacement;
-- buffered completion producing the correct next action request;
-- no-match and broken-graph failures during buffer consumption;
-- buffer cleanup after completion, cancellation, and interruption;
-- reset and reinitialization rules;
-- monotonically increasing request IDs;
-- zero, negative, non-finite, and backwards time;
-- disabled expiry, exact age boundaries, and full event replacement;
-- completion recovery and handshake precedence over invalid time;
-- valid graph topology and invalid node, edge, entry, and age configuration;
-- multiple diagnostics, repeatable diagnostic ordering, and validation non-mutation.
+Coverage focuses on contracts rather than happy paths: failure atomicity for initialization and handshakes, stale and out-of-order callbacks, Last Input Wins replacement, exact expiry boundaries, zero/negative/non-finite/backwards time, deterministic diagnostics, and validation non-mutation.
 
 From a CadenceArcSandbox checkout, run:
 
@@ -295,20 +269,28 @@ From a CadenceArcSandbox checkout, run:
 powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 ```
 
-The runner performs a cold editor build and then runs tests with English Unreal output to avoid localized result-parsing issues in Rider.
+The runner performs a cold editor build and runs all `CadenceArc` tests with English Unreal output. Timing boundaries are verified with injected timestamps, not sleeps or manual frame timing.
 
-Exact timing boundaries are verified with injected timestamps, without sleeps or manual frame timing. PIE smoke checks cover real input integration and observable execution; they do not require a person to distinguish subsecond boundaries.
+## Migration Notes
+
+Changes from earlier development versions of the API:
+
+- `SubmitInput` returns `FCadenceArcSubmitOutcome` instead of a result enum plus an output request. Replace `ECadenceArcInputResult` comparisons with category/reason checks.
+- Completion consumption is read through `GetBufferConsumption()` / `GetBufferConsumptionReason()`, gated on the handshake result. Old `Resolved` maps to `RequestProduced / None`, `InvalidTime` to `Rejected / InvalidCompletionTime`, and `Expired` to `NoAction / Expired`.
+- `Reset()` returns `ECadenceArcResolverResetResult` instead of `bool`. The initialization result `Busy` is now `UnexpectedState`.
+- Outcome fields are private; use the getters.
+- Blueprint nodes using the old enum outputs must be reconnected manually; redirects cannot convert an enum output into an outcome struct.
+- The former Gesture types were renamed to Hold without changing enum values: `ReleaseGestureConfig` -> `HoldChargeConfigs`, `PendingTap` -> `Holding`, `ReleaseGesture` -> `HoldRelease`. `Config/DefaultCadenceArc.ini` provides core redirects for existing assets. Test paths `CadenceArc.Graph.Gesture.*` are now `CadenceArc.Graph.Hold.*`.
+
+Redirects are verified for loading and enum lookup; round-trip compatibility of every historical binary asset is not guaranteed.
 
 ## Roadmap
 
-Planned work includes:
-
-1. confirm the Phase 6 design decisions using the reviewed public result API baseline;
-2. Phase 6: press/release pairing, explicit held duration, tap/hold conditions, and ambiguity rejection (design to be agreed before implementation);
-3. Phase 7: a read-only runtime graph debugger showing state, candidate/committed transitions, buffer windows, and diagnostic history;
-4. later: pause/directional conditions, additional expiry policies, priorities, and reachability analysis;
-5. optional execution adapters, including GAS;
-6. input recording, replay, networking, and prediction research.
+1. Finish Phase 6: resolver Hold qualification, duration-based selection, charge protection, and automatic release.
+2. Phase 7: a read-only runtime graph debugger showing state, candidate and committed transitions, buffer windows, and diagnostic history.
+3. Pause and directional input conditions, additional expiry policies, priorities, and reachability analysis.
+4. Optional execution adapters, including GAS.
+5. Input recording, replay, networking, and prediction research.
 
 ## Requirements
 

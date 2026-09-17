@@ -1,4 +1,4 @@
-﻿#include "Graph/CadenceArcGraph.h"
+#include "Graph/CadenceArcGraph.h"
 #include "Resolver/CadenceArcResolver.h"
 #include "Tests/CadenceArcTestSupport.h"
 
@@ -435,10 +435,10 @@ namespace CadenceArc::Tests
 		LongOnlyTransition.InputPhase = ECadenceArcInputPhase::Released;
 		LongOnlyTransition.bUseDurationRange = true;
 		LongOnlyTransition.DurationRange.MinHeldDurationSeconds = 1.0;
-		InvalidConfigGraph->Nodes[0].ReleaseGestureConfig.Add({Input_Light, -1.0, 0.0});
+		InvalidConfigGraph->Nodes[0].HoldChargeConfigs.Add({Input_Light, -1.0, 0.0});
 		ExpectInvalidInitialization(
-			TEXT("Invalid gesture configuration is rejected by shared validation"), InvalidConfigGraph,
-			TEXT("Node at index 0: Node 'CadenceArc.Automation.Action.Root': ReleaseGestureConfig at index 0 has invalid fields."));
+			TEXT("Invalid hold configuration is rejected by shared validation"), InvalidConfigGraph,
+			TEXT("Node at index 0: Node 'CadenceArc.Automation.Action.Root': HoldChargeConfigs at index 0 has invalid fields."));
 
 		// 相邻档位、同输入不同阶段、以及仅长按，都是图层允许的配置；Resolver 尚不在这里选择时长档位。
 		UCadenceArcGraph* AdjacentGraph = MakeValidGraph();

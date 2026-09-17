@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "GameplayTagContainer.h"
 #include "Input/CadenceArcInputTypes.h"
 #include "CadenceArcGraphTypes.generated.h"
@@ -44,7 +44,7 @@ struct CADENCEARC_API FCadenceArcTransition
 };
 
 USTRUCT(BlueprintType)
-struct CADENCEARC_API FCadenceArcReleaseGestureConfig
+struct CADENCEARC_API FCadenceArcHoldChargeConfig
 {
 	GENERATED_BODY()
 
@@ -58,7 +58,7 @@ struct CADENCEARC_API FCadenceArcReleaseGestureConfig
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	double MaxChargedHoldSeconds = 0.0;
 
-	bool operator ==(const FCadenceArcReleaseGestureConfig& Others) const
+	bool operator ==(const FCadenceArcHoldChargeConfig& Others) const
 	{
 		return InputTag == Others.InputTag && ChargeStartSeconds == Others.ChargeStartSeconds
 			&& MaxChargedHoldSeconds == Others.MaxChargedHoldSeconds;
@@ -83,14 +83,14 @@ struct CADENCEARC_API FCadenceArcNode
 	// 每个Tag最多一份整体计时配置；同Tag可有多条Released边，表示多个攻击档位。
 	// 仅按松手时长选择攻击、不需要蓄力保护或自动释放时，可以不填写配置。
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
-	TArray<FCadenceArcReleaseGestureConfig> ReleaseGestureConfig;
+	TArray<FCadenceArcHoldChargeConfig> HoldChargeConfigs;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	TArray<FCadenceArcTransition> Transitions;
 
 	bool operator ==(const FCadenceArcNode& Others) const
 	{
-		return ActionTag == Others.ActionTag && ReleaseGestureConfig == Others.ReleaseGestureConfig
+		return ActionTag == Others.ActionTag && HoldChargeConfigs == Others.HoldChargeConfigs
 			&& Transitions == Others.Transitions;
 	}
 

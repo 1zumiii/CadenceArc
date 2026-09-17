@@ -76,9 +76,12 @@ enum class ECadenceArcResolverResetResult : uint8
 };
 
 UENUM(BlueprintType)
-enum class ECadenceArcGestureResult : uint8
+enum class ECadenceArcHoldResult : uint8
 {
+	// 操作被拒绝；具体原因由 Outcome 提供，默认值不表示成功。
 	Rejected = 0,
+	// 本次按住资格申请成功，不表示已经产生或开始执行动作。
 	Granted,
+	// 匹配的按住资格已取消；取消不会合成释放输入或攻击。
 	Cancelled
 };

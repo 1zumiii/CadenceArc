@@ -82,12 +82,12 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 		}
 	}
 
-	for (int32 ConfigIndex = 0; ConfigIndex < ReleaseGestureConfig.Num(); ++ConfigIndex)
+	for (int32 ConfigIndex = 0; ConfigIndex < HoldChargeConfigs.Num(); ++ConfigIndex)
 	{
-		const FCadenceArcReleaseGestureConfig& Config = ReleaseGestureConfig[ConfigIndex];
+		const FCadenceArcHoldChargeConfig& Config = HoldChargeConfigs[ConfigIndex];
 		if (!Config.IsValid())
 		{
-			AddError(FString::Printf(TEXT("ReleaseGestureConfig at index %d has invalid fields."), ConfigIndex));
+			AddError(FString::Printf(TEXT("HoldChargeConfigs at index %d has invalid fields."), ConfigIndex));
 		}
 		if (!Config.InputTag.IsValid())
 		{
@@ -95,10 +95,10 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 		}
 		for (int32 PreviousIndex = 0; PreviousIndex < ConfigIndex; ++PreviousIndex)
 		{
-			if (ReleaseGestureConfig[PreviousIndex].InputTag == Config.InputTag)
+			if (HoldChargeConfigs[PreviousIndex].InputTag == Config.InputTag)
 			{
 				AddError(FString::Printf(
-					TEXT("Duplicate ReleaseGestureConfig at indices %d and %d for InputTag '%s'."),
+					TEXT("Duplicate HoldChargeConfigs at indices %d and %d for InputTag '%s'."),
 					PreviousIndex, ConfigIndex, *Config.InputTag.ToString()));
 			}
 		}
@@ -115,7 +115,7 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 			if (!Edge.bUseDurationRange)
 			{
 				AddError(FString::Printf(
-					TEXT("ReleaseGestureConfig at index %d requires a duration range on transition at index %d."),
+					TEXT("HoldChargeConfigs at index %d requires a duration range on transition at index %d."),
 					ConfigIndex, EdgeIndex));
 				continue;
 			}
@@ -131,7 +131,7 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 		if (FullRangeCount != 1 || FullDuration <= 0.0)
 		{
 			AddError(FString::Printf(
-				TEXT("ReleaseGestureConfig at index %d for InputTag '%s' requires exactly one unbounded Released range with a positive minimum."),
+				TEXT("HoldChargeConfigs at index %d for InputTag '%s' requires exactly one unbounded Released range with a positive minimum."),
 				ConfigIndex, *Config.InputTag.ToString()));
 		}
 		else if (Config.IsValid())
@@ -139,14 +139,14 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 			if (Config.ChargeStartSeconds >= FullDuration)
 			{
 				AddError(FString::Printf(
-					TEXT("ReleaseGestureConfig at index %d: ChargeStartSeconds must be less than the highest-tier minimum."),
+					TEXT("HoldChargeConfigs at index %d: ChargeStartSeconds must be less than the highest-tier minimum."),
 					ConfigIndex));
 			}
 			// 两个字段各自有限，求和仍可能溢出；拒绝无法表达的自动释放时长。
 			if (!FMath::IsFinite(FullDuration + Config.MaxChargedHoldSeconds))
 			{
 				AddError(FString::Printf(
-					TEXT("ReleaseGestureConfig at index %d: highest-tier minimum plus MaxChargedHoldSeconds must be finite."),
+					TEXT("HoldChargeConfigs at index %d: highest-tier minimum plus MaxChargedHoldSeconds must be finite."),
 					ConfigIndex));
 			}
 		}

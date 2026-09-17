@@ -194,12 +194,12 @@ private:
 };
 
 USTRUCT(BlueprintType)
-struct CADENCEARC_API FCadenceArcGestureSnapshot
+struct CADENCEARC_API FCadenceArcHoldSnapshot
 {
 	GENERATED_BODY()
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
-	bool bHasGesture = false;
+	bool bHasHold = false;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
 	FCadenceArcInputToken Token;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
@@ -208,7 +208,7 @@ struct CADENCEARC_API FCadenceArcGestureSnapshot
 	FGameplayTag SourceActionTag;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
-	ECadenceArcGestureStage Stage = ECadenceArcGestureStage::None;
+	ECadenceArcHoldStage Stage = ECadenceArcHoldStage::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
 	double PressedTimestampSeconds = 0.0;
@@ -229,19 +229,19 @@ struct CADENCEARC_API FCadenceArcGestureSnapshot
 };
 
 USTRUCT(BlueprintType)
-struct CADENCEARC_API FCadenceArcGestureOutcome
+struct CADENCEARC_API FCadenceArcHoldOutcome
 {
 	GENERATED_BODY()
 
 	friend class UCadenceArcResolver;
 
-	[[nodiscard]] ECadenceArcGestureResult GetResult() const { return Result; }
+	[[nodiscard]] ECadenceArcHoldResult GetResult() const { return Result; }
 
 	[[nodiscard]] ECadenceArcResolutionReason GetReason() const { return Reason; }
 
 private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
-	ECadenceArcGestureResult Result = ECadenceArcGestureResult::Rejected;
+	ECadenceArcHoldResult Result = ECadenceArcHoldResult::Rejected;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
 	ECadenceArcResolutionReason Reason = ECadenceArcResolutionReason::None;
 };

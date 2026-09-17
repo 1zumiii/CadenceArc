@@ -9,6 +9,7 @@
 class UCadenceArcGraph;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCadenceArc, Log, All);
+
 /**
  * Resolves semantic input tags through a configured action graph and coordinates
  * action execution through an explicit request/lifecycle handshake.
@@ -22,9 +23,20 @@ private:
 	// 内部使用
 	enum class ECadenceArcInputSlotState :uint8
 	{
+		// 槽内没有待处理输入。
 		Empty = 0,
-		PendingGesture,
+		// 持有按住资格，等待手动或自动释放后确定最终输入。
+		PendingHold,
+		// 最终输入事件已经确定，等待解析或消费。
 		ResolvedEvent
+	};
+
+	struct FCadenceArcInputSlot
+	{
+		ECadenceArcInputSlotState SlotState = ECadenceArcInputSlotState::Empty;
+		FCadenceArcInputToken InputToken;
+		FCadenceArcInputEvent InputEvent;
+		bool bFromHold = false; // 区分按住释放产生的事件与直接提交的输入。
 	};
 
 	UPROPERTY(Transient)

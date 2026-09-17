@@ -9,6 +9,47 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "UObject/CoreRedirects.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FCadenceArcHoldNamingRedirectsTest,
+	"CadenceArc.Graph.Hold.NamingRedirects",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCadenceArcHoldNamingRedirectsTest::RunTest(const FString& Parameters)
+{
+	// Query redirects loaded by the plugin, rather than installing test-only redirects.
+	const auto CheckRedirect = [this](ECoreRedirectFlags Type, const TCHAR* OldName, const TCHAR* NewName)
+	{
+		const FString OldPath = FString(TEXT("/Script/CadenceArc.")) + OldName;
+		const FString NewPath = FString(TEXT("/Script/CadenceArc.")) + NewName;
+		TestEqual(*OldPath, FCoreRedirects::GetRedirectedName(Type,
+			FCoreRedirectObjectName(OldPath)).ToString(), FCoreRedirectObjectName(NewPath).ToString());
+	};
+	CheckRedirect(ECoreRedirectFlags::Type_Struct, TEXT("CadenceArcReleaseGestureConfig"), TEXT("CadenceArcHoldChargeConfig"));
+	CheckRedirect(ECoreRedirectFlags::Type_Struct, TEXT("CadenceArcGestureSnapshot"), TEXT("CadenceArcHoldSnapshot"));
+	CheckRedirect(ECoreRedirectFlags::Type_Struct, TEXT("CadenceArcGestureOutcome"), TEXT("CadenceArcHoldOutcome"));
+	CheckRedirect(ECoreRedirectFlags::Type_Enum, TEXT("ECadenceArcGestureResult"), TEXT("ECadenceArcHoldResult"));
+	CheckRedirect(ECoreRedirectFlags::Type_Enum, TEXT("ECadenceArcGestureStage"), TEXT("ECadenceArcHoldStage"));
+	CheckRedirect(ECoreRedirectFlags::Type_Property, TEXT("CadenceArcNode.ReleaseGestureConfig"), TEXT("CadenceArcNode.HoldChargeConfigs"));
+	CheckRedirect(ECoreRedirectFlags::Type_Property, TEXT("CadenceArcGestureSnapshot.bHasGesture"), TEXT("CadenceArcHoldSnapshot.bHasHold"));
+	CheckRedirect(ECoreRedirectFlags::Type_Property, TEXT("CadenceArcHoldSnapshot.bHasGesture"), TEXT("CadenceArcHoldSnapshot.bHasHold"));
+
+	TestEqual(TEXT("Old unqualified stage value resolves"), StaticEnum<ECadenceArcHoldStage>()->GetValueByNameString(TEXT("PendingTap")),
+		static_cast<int64>(ECadenceArcHoldStage::Holding));
+	TestEqual(TEXT("Old qualified stage value resolves"), StaticEnum<ECadenceArcHoldStage>()->GetValueByNameString(TEXT("ECadenceArcGestureStage::PendingTap")),
+		static_cast<int64>(ECadenceArcHoldStage::Holding));
+	TestEqual(TEXT("Unchanged stage value keeps its numeric value"), StaticEnum<ECadenceArcHoldStage>()->GetValueByNameString(TEXT("ECadenceArcGestureStage::Charging")),
+		static_cast<int64>(ECadenceArcHoldStage::Charging));
+	TestEqual(TEXT("Old None stage resolves"), StaticEnum<ECadenceArcHoldStage>()->GetValueByNameString(TEXT("ECadenceArcGestureStage::None")),
+		static_cast<int64>(ECadenceArcHoldStage::None));
+	TestEqual(TEXT("Old Charged stage resolves"), StaticEnum<ECadenceArcHoldStage>()->GetValueByNameString(TEXT("ECadenceArcGestureStage::Charged")),
+		static_cast<int64>(ECadenceArcHoldStage::Charged));
+	TestEqual(TEXT("Old input mode resolves"), StaticEnum<ECadenceArcInputMode>()->GetValueByNameString(TEXT("ECadenceArcInputMode::ReleaseGesture")),
+		static_cast<int64>(ECadenceArcInputMode::HoldRelease));
+	return !HasAnyErrors();
+}
+
 namespace CadenceArc::Tests
 {
 	static FCadenceArcTransition MakeTransition(
@@ -37,13 +78,13 @@ namespace CadenceArc::Tests
 		return Transition;
 	}
 
-	static FString GestureSnapshot(const UCadenceArcGraph* Graph)
+	static FString HoldSnapshot(const UCadenceArcGraph* Graph)
 	{
 		FString Snapshot;
 		for (const FCadenceArcNode& Node : Graph->Nodes)
 		{
 			Snapshot += FString::Printf(TEXT("Node=%s;"), *Node.ActionTag.ToString());
-			for (const FCadenceArcReleaseGestureConfig& Config : Node.ReleaseGestureConfig)
+			for (const FCadenceArcHoldChargeConfig& Config : Node.HoldChargeConfigs)
 			{
 				Snapshot += FString::Printf(TEXT("Config=%s,%.17g,%.17g;"), *Config.InputTag.ToString(),
 					Config.ChargeStartSeconds, Config.MaxChargedHoldSeconds);
@@ -70,11 +111,11 @@ namespace CadenceArc::Tests
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcGestureRangeBoundaryTest,
-	"CadenceArc.Graph.Gesture.DurationRangeBoundaries",
+	FCadenceArcHoldRangeBoundaryTest,
+	"CadenceArc.Graph.Hold.DurationRangeBoundaries",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FCadenceArcGestureRangeBoundaryTest::RunTest(const FString& Parameters)
+bool FCadenceArcHoldRangeBoundaryTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
 	const double NaN = std::numeric_limits<double>::quiet_NaN();
@@ -122,11 +163,11 @@ bool FCadenceArcGestureRangeBoundaryTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcGestureTransitionPhaseTest,
-	"CadenceArc.Graph.Gesture.PhaseAndRangeContract",
+	FCadenceArcHoldTransitionPhaseTest,
+	"CadenceArc.Graph.Hold.PhaseAndRangeContract",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FCadenceArcGestureTransitionPhaseTest::RunTest(const FString& Parameters)
+bool FCadenceArcHoldTransitionPhaseTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
 	FCadenceArcNode Node;
@@ -155,11 +196,11 @@ bool FCadenceArcGestureTransitionPhaseTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcGestureTransitionPartitionTest,
-	"CadenceArc.Graph.Gesture.ReleasePartitions",
+	FCadenceArcHoldTransitionPartitionTest,
+	"CadenceArc.Graph.Hold.ReleasePartitions",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FCadenceArcGestureTransitionPartitionTest::RunTest(const FString& Parameters)
+bool FCadenceArcHoldTransitionPartitionTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
 	struct FCase
@@ -199,11 +240,11 @@ bool FCadenceArcGestureTransitionPartitionTest::RunTest(const FString& Parameter
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcGestureConfigSourceScopeTest,
-	"CadenceArc.Graph.Gesture.ConfigSourceScope",
+	FCadenceArcHoldConfigSourceScopeTest,
+	"CadenceArc.Graph.Hold.ConfigSourceScope",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FCadenceArcGestureConfigSourceScopeTest::RunTest(const FString& Parameters)
+bool FCadenceArcHoldConfigSourceScopeTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
 	UCadenceArcGraph* Graph = MakeValidGraph();
@@ -211,21 +252,21 @@ bool FCadenceArcGestureConfigSourceScopeTest::RunTest(const FString& Parameters)
 	Root.Transitions.Reset();
 	Root.Transitions.Add(MakeReleasedRange(Action_Light01, 0.0, true, 1.0));
 	Root.Transitions.Add(MakeReleasedRange(Action_Heavy01, 1.0, false));
-	Root.ReleaseGestureConfig.Add({Input_Light, 0.5, 3.0});
+	Root.HoldChargeConfigs.Add({Input_Light, 0.5, 3.0});
 
 	// 配置只约束当前源节点；另一个节点可为同一输入标签使用独立的普通 Release 边。
 	FCadenceArcNode& Light = Graph->Nodes[1];
 	Light.Transitions.Add(MakeTransition(Input_Light, Action_Heavy01));
 	TArray<FText> Errors;
-	TestTrue(TEXT("Gesture configuration is isolated to its source node"), Graph->ValidateGraph(Errors));
+	TestTrue(TEXT("Hold configuration is isolated to its source node"), Graph->ValidateGraph(Errors));
 	TestEqual(TEXT("Valid source-scoped configuration has no errors"), Errors.Num(), 0);
 
 	UCadenceArcGraph* LongOnlyGraph = MakeValidGraph();
 	FCadenceArcNode& LongOnlyRoot = LongOnlyGraph->Nodes[0];
 	LongOnlyRoot.Transitions.Reset();
 	LongOnlyRoot.Transitions.Add(MakeReleasedRange(Action_Light01, 1.0, false));
-	LongOnlyRoot.ReleaseGestureConfig.Add({Input_Light, 0.5, 0.0});
-	TestTrue(TEXT("Configured long-only gesture needs no normal companion"), LongOnlyGraph->ValidateGraph(Errors));
+	LongOnlyRoot.HoldChargeConfigs.Add({Input_Light, 0.5, 0.0});
+	TestTrue(TEXT("Configured long-only hold needs no normal companion"), LongOnlyGraph->ValidateGraph(Errors));
 
 	UCadenceArcGraph* MultiTierGraph = MakeValidGraph();
 	FCadenceArcNode& MultiTierRoot = MultiTierGraph->Nodes[0];
@@ -233,68 +274,68 @@ bool FCadenceArcGestureConfigSourceScopeTest::RunTest(const FString& Parameters)
 	MultiTierRoot.Transitions.Add(MakeReleasedRange(Action_Light01, 0.0, true, 1.0));
 	MultiTierRoot.Transitions.Add(MakeReleasedRange(Action_Heavy01, 1.0, true, 2.0));
 	MultiTierRoot.Transitions.Add(MakeReleasedRange(Action_Finisher01, 2.0, false));
-	MultiTierRoot.ReleaseGestureConfig.Add({Input_Light, 1.5, 0.0});
+	MultiTierRoot.HoldChargeConfigs.Add({Input_Light, 1.5, 0.0});
 	// 整体保护可在中间档之后开始；它只需要早于最高档的完整门槛。
-	TestTrue(TEXT("Configured three-tier gesture accepts intermediate charge start"), MultiTierGraph->ValidateGraph(Errors));
+	TestTrue(TEXT("Configured three-tier hold accepts intermediate charge start"), MultiTierGraph->ValidateGraph(Errors));
 
 	UCadenceArcGraph* ShortOnlyGraph = MakeValidGraph();
 	FCadenceArcNode& ShortOnlyRoot = ShortOnlyGraph->Nodes[0];
 	ShortOnlyRoot.Transitions.Reset();
 	ShortOnlyRoot.Transitions.Add(MakeReleasedRange(Action_Light01, 0.0, true, 1.0));
-	ShortOnlyRoot.ReleaseGestureConfig.Add({Input_Light, 0.0, 0.0});
-	TestFalse(TEXT("Configured short-only gesture has no full release tail"), ShortOnlyGraph->ValidateGraph(Errors));
+	ShortOnlyRoot.HoldChargeConfigs.Add({Input_Light, 0.0, 0.0});
+	TestFalse(TEXT("Configured short-only hold has no full release tail"), ShortOnlyGraph->ValidateGraph(Errors));
 
-	Root.ReleaseGestureConfig.Add({Input_Light, 0.5, 3.0});
+	Root.HoldChargeConfigs.Add({Input_Light, 0.5, 3.0});
 	TestFalse(TEXT("Only one configuration per source node and input is allowed"), Graph->ValidateGraph(Errors));
 	TestTrue(TEXT("Duplicate configuration identifies input tag"), HasError(Errors, Input_Light.GetTag().ToString()));
-	Root.ReleaseGestureConfig.Pop();
+	Root.HoldChargeConfigs.Pop();
 
 	Root.Transitions[0].bUseDurationRange = false;
-	TestFalse(TEXT("Configured gesture requires ranges on every matching release edge"), Graph->ValidateGraph(Errors));
+	TestFalse(TEXT("Configured hold requires ranges on every matching release edge"), Graph->ValidateGraph(Errors));
 	Root.Transitions[0].bUseDurationRange = true;
 	Root.Transitions[1].bUseDurationRange = true;
 	Root.Transitions[1].DurationRange.MinHeldDurationSeconds = 0.0;
-	TestFalse(TEXT("Configured gesture needs a positive unbounded tail"), Graph->ValidateGraph(Errors));
+	TestFalse(TEXT("Configured hold needs a positive unbounded tail"), Graph->ValidateGraph(Errors));
 	Root.Transitions[1].DurationRange.MinHeldDurationSeconds = 1.0;
-	Root.ReleaseGestureConfig[0].ChargeStartSeconds = 1.0;
+	Root.HoldChargeConfigs[0].ChargeStartSeconds = 1.0;
 	TestFalse(TEXT("Charge start must precede the full threshold"), Graph->ValidateGraph(Errors));
-	Root.ReleaseGestureConfig[0].ChargeStartSeconds = 0.5;
+	Root.HoldChargeConfigs[0].ChargeStartSeconds = 0.5;
 	Root.Transitions[1].DurationRange.MinHeldDurationSeconds = std::numeric_limits<double>::max();
-	Root.ReleaseGestureConfig[0].MaxChargedHoldSeconds = std::numeric_limits<double>::max();
+	Root.HoldChargeConfigs[0].MaxChargedHoldSeconds = std::numeric_limits<double>::max();
 	TestFalse(TEXT("Full threshold plus maximum hold must remain finite"), Graph->ValidateGraph(Errors));
 	Root.Transitions[1].DurationRange.MinHeldDurationSeconds = 1.0;
-	Root.ReleaseGestureConfig[0].MaxChargedHoldSeconds = 3.0;
+	Root.HoldChargeConfigs[0].MaxChargedHoldSeconds = 3.0;
 
 	const double InvalidValues[] = {-0.25, std::numeric_limits<double>::quiet_NaN(),
 		std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
 	for (const double InvalidValue : InvalidValues)
 	{
-		Root.ReleaseGestureConfig[0].ChargeStartSeconds = InvalidValue;
+		Root.HoldChargeConfigs[0].ChargeStartSeconds = InvalidValue;
 		TestFalse(*FString::Printf(TEXT("Invalid charge start %g is rejected"), InvalidValue),
 			Graph->ValidateGraph(Errors));
-		Root.ReleaseGestureConfig[0].ChargeStartSeconds = 0.5;
-		Root.ReleaseGestureConfig[0].MaxChargedHoldSeconds = InvalidValue;
+		Root.HoldChargeConfigs[0].ChargeStartSeconds = 0.5;
+		Root.HoldChargeConfigs[0].MaxChargedHoldSeconds = InvalidValue;
 		TestFalse(*FString::Printf(TEXT("Invalid maximum hold %g is rejected"), InvalidValue),
 			Graph->ValidateGraph(Errors));
-		Root.ReleaseGestureConfig[0].MaxChargedHoldSeconds = 3.0;
+		Root.HoldChargeConfigs[0].MaxChargedHoldSeconds = 3.0;
 	}
 
 	Root.Transitions[1].DurationRange.bHasMaxHeldDuration = true;
 	Root.Transitions[1].DurationRange.MaxHeldDurationSecondsExclusive = 2.0;
-	TestFalse(TEXT("Configured gesture requires an unbounded release tail"), Graph->ValidateGraph(Errors));
+	TestFalse(TEXT("Configured hold requires an unbounded release tail"), Graph->ValidateGraph(Errors));
 	Root.Transitions[1].DurationRange.bHasMaxHeldDuration = false;
-	Root.ReleaseGestureConfig.Add({Input_Heavy, 0.0, 0.0});
+	Root.HoldChargeConfigs.Add({Input_Heavy, 0.0, 0.0});
 	TestFalse(TEXT("Configuration without matching released edges is invalid"), Graph->ValidateGraph(Errors));
 	return !HasAnyErrors();
 }
 
 #if WITH_EDITOR
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcGestureEditorParityTest,
-	"CadenceArc.Graph.Gesture.EditorParity",
+	FCadenceArcHoldEditorParityTest,
+	"CadenceArc.Graph.Hold.EditorParity",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FCadenceArcGestureEditorParityTest::RunTest(const FString& Parameters)
+bool FCadenceArcHoldEditorParityTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
 	UCadenceArcGraph* Graph = MakeValidGraph();
@@ -315,11 +356,11 @@ bool FCadenceArcGestureEditorParityTest::RunTest(const FString& Parameters)
 #endif // WITH_EDITOR
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FCadenceArcGestureValidationDeterminismTest,
-	"CadenceArc.Graph.Gesture.DiagnosticsDeterminism",
+	FCadenceArcHoldValidationDeterminismTest,
+	"CadenceArc.Graph.Hold.DiagnosticsDeterminism",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FCadenceArcGestureValidationDeterminismTest::RunTest(const FString& Parameters)
+bool FCadenceArcHoldValidationDeterminismTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
 	UCadenceArcGraph* Graph = MakeValidGraph();
@@ -328,8 +369,8 @@ bool FCadenceArcGestureValidationDeterminismTest::RunTest(const FString& Paramet
 	Root.Transitions.Add(MakeReleasedRange(Action_Light01, 0.0, true, 2.0));
 	Root.Transitions.Add(MakeReleasedRange(Action_Heavy01, 1.0, false));
 	Root.Transitions.Add(MakeTransition(Input_Heavy, Input_Light));
-	Root.ReleaseGestureConfig.Add({Input_Light, 1.5, -1.0});
-	const FString Before = GestureSnapshot(Graph);
+	Root.HoldChargeConfigs.Add({Input_Light, 1.5, -1.0});
+	const FString Before = HoldSnapshot(Graph);
 
 	TArray<FText> FirstErrors = {FText::FromString(TEXT("stale error"))};
 	TArray<FText> SecondErrors;
@@ -341,7 +382,7 @@ bool FCadenceArcGestureValidationDeterminismTest::RunTest(const FString& Paramet
 	TestEqual(TEXT("Diagnostic order is deterministic"), FString::JoinBy(FirstErrors, TEXT("\n"),
 		[](const FText& Error) { return Error.ToString(); }), FString::JoinBy(SecondErrors, TEXT("\n"),
 		[](const FText& Error) { return Error.ToString(); }));
-	TestEqual(TEXT("Validation does not mutate graph configuration"), GestureSnapshot(Graph), Before);
+	TestEqual(TEXT("Validation does not mutate graph configuration"), HoldSnapshot(Graph), Before);
 	return !HasAnyErrors();
 }
 
