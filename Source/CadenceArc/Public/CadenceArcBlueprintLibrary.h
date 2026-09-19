@@ -42,4 +42,11 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver|Outcome")
 	static ECadenceArcHandshakeResult BP_GetHandshakeResult(const FCadenceArcActionCompletionOutcome& Outcome);
+
+	// 推进结果的其余字段本身就是 BlueprintReadOnly，这里只补两个推导出来的判断。
+	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver|Outcome")
+	static bool BP_HasRelease(const FCadenceArcInputAdvanceOutcome& Outcome);
+
+	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver|Outcome")
+	static bool BP_HasReleasedActionRequest(const FCadenceArcInputAdvanceOutcome& Outcome);
 };

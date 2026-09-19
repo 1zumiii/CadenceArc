@@ -3,6 +3,8 @@
 #include "Input/CadenceArcInputTypes.h"
 #include "CadenceArcGraphTypes.generated.h"
 
+struct FCadenceArcInputEvent;
+
 USTRUCT(BlueprintType)
 struct CADENCEARC_API FCadenceArcTransition
 {
@@ -23,6 +25,10 @@ struct CADENCEARC_API FCadenceArcTransition
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	FCadenceArcHeldDurationRange DurationRange;
+
+	// 这条边能否接受该输入事件：Tag 与 Phase 必须一致，Released 边再比对时长范围。
+	// 图校验已禁止 Pressed 边启用范围，所以 Pressed 只比 Tag 和 Phase。
+	bool Matches(const FCadenceArcInputEvent& Event) const;
 
 	bool operator ==(const FCadenceArcTransition& Others) const
 	{
@@ -93,6 +99,15 @@ struct CADENCEARC_API FCadenceArcNode
 		return ActionTag == Others.ActionTag && HoldChargeConfigs == Others.HoldChargeConfigs
 			&& Transitions == Others.Transitions;
 	}
+
+	// 按 InputTag 查找该节点的整体计时配置；没有配置是合法的，返回 nullptr。
+	const FCadenceArcHoldChargeConfig* FindHoldChargeConfig(const FGameplayTag& InputTag) const;
+
+	// 收集该节点上同 Tag、同 Phase 的全部边；每次先清空 OutTransitions。
+	void CollectTransitions(
+		const FGameplayTag& InputTag, ECadenceArcInputPhase Phase,
+		TArray<FCadenceArcTransition>& OutTransitions
+	) const;
 
 	// 校验节点内的阶段、区间歧义与蓄力配置关联；目标节点是否存在由图校验负责。
 	// 可选输出会先清空；诊断按数组顺序生成，不修改配置，也不要求区间连续。

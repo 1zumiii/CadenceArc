@@ -45,20 +45,8 @@ private:
 		FCadenceArcHoldChargeConfig ChargeConfig;
 		TArray<FCadenceArcTransition> ReleasedEdges; // 按住释放时的边集合,用于在 ResolveInput 时进行匹配
 		double MaxBufferedInputAgeSeconds = 0.0;
+		double ChargeFullSeconds = 0.0;   // bHasChargeConfig 为 false 时为 0 且不参与计算
 	};
-
-	// 取缔原有的 Category-Reason 翻译层
-	struct FTransitionMatch
-	{
-		ECadenceArcResolutionReason Reason = ECadenceArcResolutionReason::NoMatchingTransition;
-		FGameplayTag TargetActionTag; // 仅当 Reason == None 时有效
-	};
-
-	FTransitionMatch FindUniqueTransition(
-		const FGameplayTag& SourceActionTag,
-		const FCadenceArcInputEvent& Event,
-		const TArray<FCadenceArcTransition>* EdgesOverride = nullptr // 按住资格传入边副本
-	) const;
 
 	FCadenceArcActionRequest CommitRequest(
 		const FGameplayTag& InputTag, const FGameplayTag& TargetActionTag
@@ -96,6 +84,22 @@ private:
 		const int64 InRequestId,
 		const bool bShouldOpen
 	);
+	
+	// 返回 None 表示可以继续；否则调用方直接用这个原因拒绝
+	ECadenceArcResolutionReason CheckPendingHoldConflict(double NowSeconds) const;
+
+	// 释放已经确定之后的共用消费路径：校验上下文与年龄，再用授予时的边副本解析。
+	// 手动松手与自动释放都走这里，保证"一次按下最多兑现一次"。
+	FCadenceArcSubmitOutcome ConsumeHoldRelease(
+		const FCadenceArcInputSlot& HoldSlot, const FCadenceArcInputEvent& ReleasedEvent, double NowSeconds
+	);
+
+	// 释放已经决定之后的共用收尾：资格一定终结，再按当前状态立即消费或存成缓冲事件。
+	// ObservedTimestampSeconds 是真实观察到释放的时刻；自动释放时它可能晚于事件时刻。
+	FCadenceArcSubmitOutcome FinishHoldRelease(
+		const FCadenceArcInputSlot& HoldSlot, const FCadenceArcInputEvent& ReleasedEvent,
+		double ObservedTimestampSeconds
+	);
 
 	void ClearInputSlot();
 	void ResetBufferWindow();
@@ -130,6 +134,10 @@ public:
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
 	FGameplayTag GetBufferedInputTag() const;
 
+	// 按值返回的只读查询；没有待松手资格时返回空快照（bHasHold=false、Stage=None）。
+	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
+	FCadenceArcHoldSnapshot GetInputHoldSnapshot() const;
+
 	/// Handshake Notifications
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	ECadenceArcHandshakeResult NotifyActionStarted(const int64 InRequestId);
@@ -155,4 +163,24 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	ECadenceArcHandshakeResult CloseBufferWindow(const int64 InRequestId);
+
+	// 物理松手。校验通过后资格一定终结，无论是否解析出候选。
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	FCadenceArcInputAdvanceOutcome ReleaseInputHold(
+		const FCadenceArcInputToken& Token, const FCadenceArcInputEvent& ReleaseEvent
+	);
+
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	FCadenceArcHoldOutcome BeginInputHold(
+		const FCadenceArcInputToken& Token, const FCadenceArcInputEvent& PressEvent
+	);
+
+	// 推进按住资格的时间：跨过的阈值按时间升序报告，到达保持上限时自动释放一次。
+	// 宿主每帧先调用它并处理结果，再处理输入或 Completed。没有资格时是接受的空操作。
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	FCadenceArcInputAdvanceOutcome AdvanceInputTime(const double NowSeconds);
+
+	// 显式丢弃按住资格（失焦、解绑、翻滚／防御打断）。不合成松手，也不撤销已提交的候选。
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	FCadenceArcHoldOutcome CancelInputHold(const FCadenceArcInputToken& Token);
 };

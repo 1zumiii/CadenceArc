@@ -32,9 +32,10 @@ Available now:
 - structured, read-only result types with Blueprint accessors;
 - shared graph validation for editor assets and resolver initialization;
 - a physical press/release tracker (`FCadenceArcInputTracker`);
+- resolver-side hold qualification: duration-based release tiers, time-derived charge stages, charge protection, and automatic release;
 - memory-only Unreal Automation Tests.
 
-In progress (Phase 6, Hold input): graphs can already describe input phases, held-duration ranges, and optional charge timing, and these are validated. The resolver still selects transitions by input tag only; duration-based selection, hold protection, and automatic release are not implemented yet. Do not rely on multi-tier Hold configuration at runtime.
+In progress (Phase 6, Hold input): the resolver runtime is implemented and covered by automated tests. What remains is host integration -- binding a physical release in the Sandbox demo, injecting one game-time value per frame through `AdvanceInputTime`, and the phase acceptance pass. The Hold API is not yet exercised in a shipped host, so treat its ergonomics as unsettled.
 
 ## Why the Handshake Exists
 
@@ -64,6 +65,8 @@ The resolver never assumes that an emitted action was successfully executed.
 | `Executing` | Closed | Returns `NoAction / BufferWindowClosed` without changing the stored input. |
 
 The external executor controls the window with `OpenBufferWindow(RequestId)` and `CloseBufferWindow(RequestId)`. Both require the current executing request ID, so stale animation or state-machine notifications are harmless. Closing a window freezes the stored input rather than clearing it.
+
+The same single slot also holds a pending hold qualification, so `SubmitInput` has two further rejections once one exists: `HoldProtected` while the hold is charging, and `InputTimeAdvanceRequired` when its automatic release is overdue. See [Hold Input](#hold-input-phase-6).
 
 When the current action completes, `NotifyActionCompleted` returns an `FCadenceArcActionCompletionOutcome`:
 
@@ -137,14 +140,53 @@ if (Completion.HasNextActionRequest())
 
 ## Hold Input (Phase 6)
 
-A **Hold** is one press-to-release sequence identified by an `FCadenceArcInputToken`. An immediate release is still a Hold; the name does not imply that a long-press threshold was reached. `FCadenceArcInputTracker` owns physical press/release pairing and measures held duration; the resolver will own the qualification to resolve that input.
+A **Hold** is one press-to-release sequence identified by an `FCadenceArcInputToken`. An immediate release is still a Hold; the name does not imply that a long-press threshold was reached. `FCadenceArcInputTracker` owns physical press/release pairing and measures held duration; the resolver owns the qualification that turns that pair into an action request.
 
 - `ECadenceArcInputMode::PressOnly` submits on press. `HoldRelease` requests qualification on press and settles on manual or automatic release.
 - `ECadenceArcHoldStage` is `None`, `Holding`, `Charging`, or `Charged`. Stages are derived from time, not stored. `Holding` means qualified but not charging, including holds without charge configuration.
 - Transitions may set `InputPhase` and a half-open `DurationRange` (`[Min, Max)`, or unbounded). Ranges for the same source, tag, and phase must not overlap; adjacent ranges and gaps are allowed, so multiple release tiers can be expressed.
 - `FCadenceArcHoldChargeConfig` in `FCadenceArcNode::HoldChargeConfigs` optionally adds charge protection and auto-release timing for one input tag. The full-charge threshold is the minimum of that tag's single unbounded Released range.
 
-Planned resolver APIs: `BeginInputHold`, `ReleaseInputHold`, `CancelInputHold`, `AdvanceInputTime`, and `GetInputHoldSnapshot`.
+### Resolver API
+
+```cpp
+FCadenceArcHoldOutcome         BeginInputHold(const FCadenceArcInputToken&, const FCadenceArcInputEvent& Press);
+FCadenceArcInputAdvanceOutcome ReleaseInputHold(const FCadenceArcInputToken&, const FCadenceArcInputEvent& Release);
+FCadenceArcInputAdvanceOutcome AdvanceInputTime(double NowSeconds);
+FCadenceArcHoldOutcome         CancelInputHold(const FCadenceArcInputToken&);
+FCadenceArcHoldSnapshot        GetInputHoldSnapshot() const;
+```
+
+The host advances time first each frame and handles that result before processing input or lifecycle callbacks:
+
+```cpp
+const FCadenceArcInputAdvanceOutcome Advance = Resolver->AdvanceInputTime(NowSeconds);
+for (const FCadenceArcInputStageChange& Change : Advance.GetStageChanges())
+{
+    // Charge feedback belongs at Change.EffectiveTimestampSeconds, not at NowSeconds.
+}
+if (Advance.HasActionRequest())
+{
+    StartRequest(Advance.GetResolution().GetActionRequest());
+}
+```
+
+| Call | Accepted when | Effect |
+| --- | --- | --- |
+| `BeginInputHold` | `Ready`, or `Executing` with an open window | Stores one qualification bound to the committed node and context id, with copies of that tag's Released edges, charge config, and `MaxBufferedInputAgeSeconds`. |
+| `AdvanceInputTime` | Any state, with a finite, nondecreasing time | Reports crossed thresholds in time order and releases once at `Pressed + FullCharge + MaxChargedHold`. Without a qualification it is an accepted no-op that leaves a plain buffer alone. |
+| `ReleaseInputHold` | The stored token matches and the event is a consistent `Released` event for the same tag | Ends the qualification, then resolves in `Ready` or stores a buffered event during `Executing`. |
+| `CancelInputHold` | The stored token matches a qualification or its unconsumed release | Clears the slot without synthesizing a release or revoking a committed request. |
+
+Rules that follow from this model:
+
+- One press redeems at most one action. After an automatic release the physical release returns `NoMatchingHold`.
+- A qualification survives window close and a normal `NotifyActionCompleted`, which reports `NoAction / WaitingForRelease`. Charging keeps running, so the previous action ending never downgrades a charged attack into a tap.
+- While `Charging` or `Charged`, other graph inputs are rejected with `HoldProtected`. Dodge- or block-style interrupts call `CancelInputHold` instead of going through the graph. Inputs without a charge config stay `Holding` and can be replaced by any accepted input.
+- When an automatic release is already due, `SubmitInput` and `BeginInputHold` return `Rejected / InputTimeAdvanceRequired` and `NotifyActionCompleted` returns the handshake result `InputTimeAdvanceRequired`, all without side effects. Call `AdvanceInputTime` and handle its result, then retry.
+- Release matching uses the qualification's frozen edge copies, so editing the asset while a hold is pending cannot change how that press is interpreted. Buffered-input age is measured from the release timestamp; an automatic release stamps the event with the deadline while age uses the time actually observed.
+- A release that matches no edge or that has expired still ends the qualification. It never reverts to a pending hold.
+- The held duration supplied to `ReleaseInputHold` must equal `TimestampSeconds - PressedTimestampSeconds` as a single `double` operation; the resolver does not trust a caller-supplied duration.
 
 ## Editor Graph Validation
 
@@ -206,7 +248,7 @@ Only one outstanding request exists at a time.
 | `SubmitInput` resolves | `Ready` | Creates a request and enters `AwaitingStart`; current action is unchanged. |
 | `NotifyActionStarted` | `AwaitingStart` | Commits the target action and enters `Executing`. |
 | `NotifyActionRejected` | `AwaitingStart` | Returns to `Ready`, keeps the source action, and clears the request. |
-| `NotifyActionCompleted` | `Executing` | Keeps the committed action, consumes the buffer, then enters `Ready` or emits the next request and enters `AwaitingStart`. |
+| `NotifyActionCompleted` | `Executing` | Keeps the committed action, consumes the buffer, then enters `Ready` or emits the next request and enters `AwaitingStart`. With a pending hold it keeps the qualification and reports `NoAction / WaitingForRelease`. |
 | `NotifyActionCancelled` | `Executing` | Returns to `Ready`, resets to the entry action, and clears the request. |
 | `NotifyActionInterrupted` | `Executing` | Returns to `Ready`, resets to the entry action, and clears the request. |
 
@@ -257,6 +299,7 @@ Tests live under `Source/CadenceArc/Private/Tests/` and build graphs in memory, 
 - `Resolver/CadenceArcResolverBufferTests.cpp` -- buffer windows, replacement, and consumption;
 - `Resolver/CadenceArcResolverLifecycleTests.cpp` -- lifecycle callbacks, cancellation, interruption, and reset;
 - `Resolver/CadenceArcResolverTimeTests.cpp` -- timestamps and buffer expiry;
+- `Resolver/CadenceArcResolverHoldTests.cpp` -- hold qualification, snapshots, stage crossings, manual and automatic release, protection, survival across completion, cancellation, and lifecycle cleanup;
 - `Graph/CadenceArcGraphValidationTests.cpp` -- graph topology validation;
 - `Graph/CadenceArcHoldValidationTests.cpp` -- phases, duration ranges, charge configuration, and naming redirects;
 - `Input/CadenceArcInputTrackerTests.cpp` -- press/release pairing, duration, tokens, and cleanup.
@@ -281,12 +324,14 @@ Changes from earlier development versions of the API:
 - Outcome fields are private; use the getters.
 - Blueprint nodes using the old enum outputs must be reconnected manually; redirects cannot convert an enum output into an outcome struct.
 - The former Gesture types were renamed to Hold without changing enum values: `ReleaseGestureConfig` -> `HoldChargeConfigs`, `PendingTap` -> `Holding`, `ReleaseGesture` -> `HoldRelease`. `Config/DefaultCadenceArc.ini` provides core redirects for existing assets. Test paths `CadenceArc.Graph.Gesture.*` are now `CadenceArc.Graph.Hold.*`.
+- Hold support appends members to two enums without changing existing values. `ECadenceArcResolutionReason` gains `InvalidInputEvent`, `InputIdentityRequired`, `NoMatchingHold`, `HoldProtected`, `InputTimeAdvanceRequired`, `WaitingForRelease`, and `InvalidGraphConfiguration`; `ECadenceArcHandshakeResult` gains `InvalidCompletionTime` and `InputTimeAdvanceRequired`. Code that switches exhaustively over either enum must handle the new members.
+- `SubmitInput` now rejects a `Released` event with `InputIdentityRequired`: a release must carry its press token through `ReleaseInputHold`. It also rejects an inconsistent phase or held duration with `InvalidInputEvent`.
 
 Redirects are verified for loading and enum lookup; round-trip compatibility of every historical binary asset is not guaranteed.
 
 ## Roadmap
 
-1. Finish Phase 6: resolver Hold qualification, duration-based selection, charge protection, and automatic release.
+1. Finish Phase 6: Sandbox integration for physical release and per-frame host time, then the phase acceptance pass.
 2. Phase 7: a read-only runtime graph debugger showing state, candidate and committed transitions, buffer windows, and diagnostic history.
 3. Pause and directional input conditions, additional expiry policies, priorities, and reachability analysis.
 4. Optional execution adapters, including GAS.

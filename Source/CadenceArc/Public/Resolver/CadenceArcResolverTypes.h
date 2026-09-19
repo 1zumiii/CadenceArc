@@ -194,6 +194,102 @@ private:
 };
 
 USTRUCT(BlueprintType)
+struct CADENCEARC_API FCadenceArcInputStageChange
+{
+	GENERATED_BODY()
+
+	// 跨过阈值之后到达的阶段。只会是 Charging 或 Charged。
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	ECadenceArcHoldStage ToStage = ECadenceArcHoldStage::None;
+
+	// 阈值本身的时刻，不是调用 Advance 的时刻。
+	// 宿主要在正确的时间点播特效时用它，而不是用 Now。
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver")
+	double EffectiveTimestampSeconds = 0.0;
+};
+
+// 推进结果 Resolver专用，外部只读
+USTRUCT(BlueprintType)
+struct CADENCEARC_API FCadenceArcInputAdvanceOutcome
+{
+	GENERATED_BODY()
+
+	friend class UCadenceArcResolver;
+
+	[[nodiscard]] bool IsAccepted() const { return bAccepted; }
+	[[nodiscard]] ECadenceArcResolutionReason GetReason() const { return Reason; }
+	[[nodiscard]] FCadenceArcInputToken GetToken() const { return Token; }
+	[[nodiscard]] const TArray<FCadenceArcInputStageChange>& GetStageChanges() const { return StageChanges; }
+	[[nodiscard]] ECadenceArcInputReleaseSource GetReleaseSource() const { return ReleaseSource; }
+	[[nodiscard]] FCadenceArcInputEvent GetReleasedInput() const { return ReleasedInput; }
+	[[nodiscard]] const FCadenceArcSubmitOutcome& GetResolution() const { return Resolution; }
+
+	// 本次调用是否真的产生了一次释放
+	bool HasRelease() const
+	{
+		return bAccepted && ReleaseSource != ECadenceArcInputReleaseSource::None;
+	}
+
+	// 有请求必须同时满足：调用被接受、确实释放了、解析产生了候选
+	bool HasActionRequest() const
+	{
+		return HasRelease() && Resolution.HasActionRequest();
+	}
+
+private:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	bool bAccepted = false;                    // 默认拒绝
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	ECadenceArcResolutionReason Reason = ECadenceArcResolutionReason::None;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	FCadenceArcInputToken Token;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	TArray<FCadenceArcInputStageChange> StageChanges;   // 按时间升序
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	ECadenceArcInputReleaseSource ReleaseSource = ECadenceArcInputReleaseSource::None;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	FCadenceArcInputEvent ReleasedInput;               // 仅 HasRelease 时有效
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	FCadenceArcSubmitOutcome Resolution;               // 仅 HasRelease 时有意义
+
+	// ---- 只有 Resolver 能填 ----
+	void SetRejected(const ECadenceArcResolutionReason InReason)
+	{
+		bAccepted = false;
+		Reason = InReason;
+		Token = FCadenceArcInputToken{};
+		StageChanges.Reset();
+		ReleaseSource = ECadenceArcInputReleaseSource::None;
+		ReleasedInput = FCadenceArcInputEvent{};
+		Resolution = FCadenceArcSubmitOutcome{};
+	}
+
+	// 接受但尚未释放：可能带阶段变化，ReleaseSource 保持 None
+	void SetAccepted(const FCadenceArcInputToken& InToken)
+	{
+		bAccepted = true;
+		Reason = ECadenceArcResolutionReason::None;
+		Token = InToken;
+	}
+
+	void AddStageChange(const ECadenceArcHoldStage ToStage, const double EffectiveTimestampSeconds)
+	{
+		StageChanges.Add(FCadenceArcInputStageChange{ToStage, EffectiveTimestampSeconds});
+	}
+
+	// 释放发生了才调用。资格到此终结，即使 Resolution 是 NoAction 或 Rejected。
+	void SetRelease(
+		const FCadenceArcInputEvent& InReleasedInput,
+		const ECadenceArcInputReleaseSource InSource,
+		const FCadenceArcSubmitOutcome& InResolution)
+	{
+		ReleasedInput = InReleasedInput;
+		ReleaseSource = InSource;
+		Resolution = InResolution;
+	}
+};
+
+USTRUCT(BlueprintType)
 struct CADENCEARC_API FCadenceArcHoldSnapshot
 {
 	GENERATED_BODY()
@@ -241,8 +337,27 @@ struct CADENCEARC_API FCadenceArcHoldOutcome
 	[[nodiscard]] ECadenceArcHoldResult GetResult() const { return Result; }
 
 	[[nodiscard]] ECadenceArcResolutionReason GetReason() const { return Reason; }
-
 private:
+	// 只有 Resolver 能构造结果，外部拿到的永远是合法组合
+	void SetRejected(const ECadenceArcResolutionReason InReason)
+	{
+		Result = ECadenceArcHoldResult::Rejected;
+		Reason = InReason;
+	}
+
+	void SetGranted()
+	{
+		Result = ECadenceArcHoldResult::Granted;
+		Reason = ECadenceArcResolutionReason::None;
+	}
+
+	// 取消只清掉资格，不合成松手事件，也不产生候选动作
+	void SetCancelled()
+	{
+		Result = ECadenceArcHoldResult::Cancelled;
+		Reason = ECadenceArcResolutionReason::None;
+	}
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
 	ECadenceArcHoldResult Result = ECadenceArcHoldResult::Rejected;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))

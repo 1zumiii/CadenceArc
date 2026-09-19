@@ -1,5 +1,7 @@
 #include "Graph/CadenceArcGraphTypes.h"
 
+#include "Resolver/CadenceArcResolverTypes.h"
+
 namespace
 {
 	bool IsKnownPhase(const ECadenceArcInputPhase Phase)
@@ -152,4 +154,36 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 		}
 	}
 	return bValid;
+}
+
+bool FCadenceArcTransition::Matches(const FCadenceArcInputEvent& Event) const
+{
+	if (InputTag != Event.InputTag || InputPhase != Event.InputPhase)
+	{
+		return false;
+	}
+	// Pressed 边不看范围；Released 边未启用范围时接受任意合法时长。
+	return Event.InputPhase == ECadenceArcInputPhase::Pressed
+		|| !bUseDurationRange
+		|| DurationRange.Contains(Event.HeldDurationSeconds);
+}
+
+const FCadenceArcHoldChargeConfig* FCadenceArcNode::FindHoldChargeConfig(const FGameplayTag& InputTag) const
+{
+	return HoldChargeConfigs.FindByPredicate(
+		[&InputTag](const FCadenceArcHoldChargeConfig& Config) { return Config.InputTag == InputTag; });
+}
+
+void FCadenceArcNode::CollectTransitions(
+	const FGameplayTag& InputTag, const ECadenceArcInputPhase Phase,
+	TArray<FCadenceArcTransition>& OutTransitions) const
+{
+	OutTransitions.Reset();
+	for (const FCadenceArcTransition& Transition : Transitions)
+	{
+		if (Transition.InputTag == InputTag && Transition.InputPhase == Phase)
+		{
+			OutTransitions.Add(Transition);
+		}
+	}
 }

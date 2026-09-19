@@ -26,6 +26,12 @@ public:
 
 	// Runtime和编辑器共用的只读校验入口；每次先清空OutErrors。
 	bool ValidateGraph(TArray<FText>& OutErrors) const;
+	
+	// 检查某个节点是否存在于图中；不检查节点内部配置
+	bool ContainsAction(const FGameplayTag& GameplayTag) const;
+	const FCadenceArcNode* FindAction(const FGameplayTag& ActionTag) const;
+
+	
 
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;

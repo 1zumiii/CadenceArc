@@ -74,6 +74,16 @@ bool UCadenceArcGraph::ValidateGraph(TArray<FText>& OutErrors) const
 	return OutErrors.IsEmpty();
 }
 
+bool UCadenceArcGraph::ContainsAction(const FGameplayTag& GameplayTag) const
+{
+	return Nodes.ContainsByPredicate([&](const FCadenceArcNode& Node) { return Node.ActionTag == GameplayTag; });
+}
+
+const FCadenceArcNode* UCadenceArcGraph::FindAction(const FGameplayTag& ActionTag) const
+{
+	return Nodes.FindByPredicate([&](const FCadenceArcNode& Node) { return Node.ActionTag == ActionTag; });
+}
+
 #if WITH_EDITOR
 EDataValidationResult UCadenceArcGraph::IsDataValid(FDataValidationContext& Context) const
 {

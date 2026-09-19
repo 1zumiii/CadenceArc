@@ -56,3 +56,13 @@ bool UCadenceArcBlueprintLibrary::BP_HasNextActionRequest(const FCadenceArcActio
 {
 	return Outcome.HasNextActionRequest();
 }
+
+bool UCadenceArcBlueprintLibrary::BP_HasRelease(const FCadenceArcInputAdvanceOutcome& Outcome)
+{
+	return Outcome.HasRelease();
+}
+
+bool UCadenceArcBlueprintLibrary::BP_HasReleasedActionRequest(const FCadenceArcInputAdvanceOutcome& Outcome)
+{
+	return Outcome.HasActionRequest();
+}
