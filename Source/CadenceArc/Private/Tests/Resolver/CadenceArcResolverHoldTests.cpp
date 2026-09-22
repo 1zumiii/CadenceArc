@@ -303,14 +303,15 @@ namespace CadenceArc::Tests
 			ExpectHoldOutcome(*this, TEXT("Released event as press"),
 			                  Resolver->BeginInputHold(Token, MakeHoldRelease(Input_Heavy, 1.0, 1.2)),
 			                  ECadenceArcHoldResult::Rejected, ECadenceArcResolutionReason::InvalidInputEvent);
+			// 事件本身的原因顺序由 ValidateInputEvent 单点定义，与 SubmitInput 报同样的原因
 			ExpectHoldOutcome(*this, TEXT("Invalid input tag"),
 			                  Resolver->BeginInputHold(Token, MakeHoldPress(FGameplayTag::EmptyTag, 1.0)),
-			                  ECadenceArcHoldResult::Rejected, ECadenceArcResolutionReason::InvalidInputEvent);
+			                  ECadenceArcHoldResult::Rejected, ECadenceArcResolutionReason::InvalidInputTag);
 			for (const double Invalid : InvalidTimes())
 			{
 				ExpectHoldOutcome(*this, *FString::Printf(TEXT("Invalid press time %g"), Invalid),
 				                  Resolver->BeginInputHold(Token, MakeHoldPress(Input_Heavy, Invalid)),
-				                  ECadenceArcHoldResult::Rejected, ECadenceArcResolutionReason::InvalidInputEvent);
+				                  ECadenceArcHoldResult::Rejected, ECadenceArcResolutionReason::InvalidTimestamp);
 			}
 			ExpectNoHold(*this, TEXT("Rejected begin"), Resolver);
 			TestState(*this, TEXT("Rejected begin keeps Ready"), Resolver->GetState(),

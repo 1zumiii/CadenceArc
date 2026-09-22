@@ -45,7 +45,7 @@ private:
 		FCadenceArcHoldChargeConfig ChargeConfig;
 		TArray<FCadenceArcTransition> ReleasedEdges; // 按住释放时的边集合,用于在 ResolveInput 时进行匹配
 		double MaxBufferedInputAgeSeconds = 0.0;
-		double ChargeFullSeconds = 0.0;   // bHasChargeConfig 为 false 时为 0 且不参与计算
+		double ChargeFullSeconds = 0.0; // bHasChargeConfig 为 false 时为 0 且不参与计算
 	};
 
 	FCadenceArcActionRequest CommitRequest(
@@ -84,18 +84,41 @@ private:
 		const int64 InRequestId,
 		const bool bShouldOpen
 	);
-	
+
 	// 返回 None 表示可以继续；否则调用方直接用这个原因拒绝
 	ECadenceArcResolutionReason CheckPendingHoldConflict(double NowSeconds) const;
 
-	// 释放已经确定之后的共用消费路径：校验上下文与年龄，再用授予时的边副本解析。
+	// 事件本身是否合法，与 Resolver 当前状态无关。返回 None 表示通过。
+	// 原因顺序（Tag → 时间 → Phase／HeldDuration）只在这里定义一次，所有输入入口共用。
+	static ECadenceArcResolutionReason ValidateInputEvent(const FCadenceArcInputEvent& Event);
+
+	// 当前状态能否接收一次新输入。返回 None 表示可以，否则调用方直接用这个原因拒绝
+	// 顺序：未初始化 → 状态原因（RequestPending／BufferWindowClosed）→ 已有资格的冲突
+	// SubmitInput 与 BeginInputHold 共用同一个入口，任何一方都不可能漏掉蓄力保护
+	ECadenceArcResolutionReason CheckInputAdmission(double NowSeconds) const;
+
+	// 按 CategoryOf 的分类填充一个非成功的提交结果；Reason 为 None 时不应调用。
+	static FCadenceArcSubmitOutcome MakeFailedOutcome(ECadenceArcResolutionReason Reason);
+
+	// 提交一个新的已执行节点。上下文编号与已提交节点严格同步：节点一变就是一次新执行，
+	// 旧的按住资格必须失效（回到同名节点的另一次执行同样算新上下文）
+	// 这是唯一允许写 CurrentActionTag 的地方。
+	void CommitNode(const FGameplayTag& NewActionTag);
+
+	// 终结当前动作：先校验握手，再清请求、清槽、关窗并回到 Ready。
+	// bReturnToEntry 为真时把已提交节点退回入口，因而同时换一个上下文编号。
+	ECadenceArcHandshakeResult EndAction(
+		int64 InRequestId, ECadenceArcResolverState ExpectedState, bool bReturnToEntry
+	);
+
+	// 释放已经确定之后的共用消费路径：校验上下文与年龄，再用授予时的边副本解析
 	// 手动松手与自动释放都走这里，保证"一次按下最多兑现一次"。
 	FCadenceArcSubmitOutcome ConsumeHoldRelease(
 		const FCadenceArcInputSlot& HoldSlot, const FCadenceArcInputEvent& ReleasedEvent, double NowSeconds
 	);
 
 	// 释放已经决定之后的共用收尾：资格一定终结，再按当前状态立即消费或存成缓冲事件。
-	// ObservedTimestampSeconds 是真实观察到释放的时刻；自动释放时它可能晚于事件时刻。
+	// ObservedTimestampSeconds 是真实观察到释放的时刻；自动释放时它可能晚于事件时刻
 	FCadenceArcSubmitOutcome FinishHoldRelease(
 		const FCadenceArcInputSlot& HoldSlot, const FCadenceArcInputEvent& ReleasedEvent,
 		double ObservedTimestampSeconds

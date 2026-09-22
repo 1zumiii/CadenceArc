@@ -59,9 +59,8 @@ ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* 
 		return ECadenceArcResolverInitResult::InvalidGraph;
 	}
 	Graph = InGraph;
-	CurrentActionTag = InGraph->EntryActionTag;
 	State = ECadenceArcResolverState::Ready;
-	++CurrentContextId; // 新的执行上下文：旧资格即使残留也不再匹配
+	CommitNode(InGraph->EntryActionTag); // 新的执行上下文：旧资格即使残留也不再匹配
 	OutstandingRequest = FCadenceArcActionRequest{};
 	ClearInputSlot();
 	ResetBufferWindow();
@@ -73,25 +72,14 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::SubmitInput(const FCadenceArcInput
 	FCadenceArcSubmitOutcome Outcome;
 	Outcome.SetRejected(ECadenceArcResolutionReason::NotInitialized); // 悲观默认值,每条分支都会覆盖它
 
-	if (State == ECadenceArcResolverState::Uninitialized)
+	if (!IsInitialized())
 	{
 		return Outcome;
 	}
-	if (!InInputEvent.InputTag.IsValid())
+	if (const ECadenceArcResolutionReason Invalid = ValidateInputEvent(InInputEvent);
+		Invalid != ECadenceArcResolutionReason::None)
 	{
-		Outcome.SetRejected(ECadenceArcResolutionReason::InvalidInputTag);
-		return Outcome;
-	}
-	if (!InInputEvent.IsValidTimestamp())
-	{
-		Outcome.SetRejected(ECadenceArcResolutionReason::InvalidTimestamp);
-		return Outcome;
-	}
-
-	// Tag 和时间前面已经单独检查过，这里 IsValid() 失败只可能是 Phase 或 HeldDuration 的问题
-	if (!InInputEvent.IsValid())
-	{
-		Outcome.SetRejected(ECadenceArcResolutionReason::InvalidInputEvent);
+		Outcome.SetRejected(Invalid);
 		return Outcome;
 	}
 	// 松手事件必须带着按下时的 Token，通过 ReleaseInputHold 提交
@@ -100,25 +88,11 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::SubmitInput(const FCadenceArcInput
 		Outcome.SetRejected(ECadenceArcResolutionReason::InputIdentityRequired);
 		return Outcome;
 	}
-
-	// 状态原因排在资格冲突之前：本来就不接收输入的状态保持 Phase 5 的原有拒绝理由
-	if (State == ECadenceArcResolverState::AwaitingStart)
+	// 状态与已有资格的准入检查；本来就不接收输入的状态保持 Phase 5 的原有拒绝理由
+	if (const ECadenceArcResolutionReason Admission = CheckInputAdmission(InInputEvent.TimestampSeconds);
+		Admission != ECadenceArcResolutionReason::None)
 	{
-		Outcome.SetNoAction(ECadenceArcResolutionReason::RequestPending);
-		return Outcome;
-	}
-	if (State == ECadenceArcResolverState::Executing && !bIsBufferWindowOpen)
-	{
-		Outcome.SetNoAction(ECadenceArcResolutionReason::BufferWindowClosed);
-		return Outcome;
-	}
-
-	// 已有按住资格时才谈冲突：时间倒退、漏 Advance、Charging／Charged 保护
-	if (const ECadenceArcResolutionReason Conflict = CheckPendingHoldConflict(InInputEvent.TimestampSeconds);
-		Conflict != ECadenceArcResolutionReason::None)
-	{
-		Outcome.SetRejected(Conflict);
-		return Outcome;
+		return MakeFailedOutcome(Admission);
 	}
 
 	switch (State)
@@ -133,13 +107,9 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::SubmitInput(const FCadenceArcInput
 				Outcome.SetRequestProduced(CommitRequest(InInputEvent.InputTag, Match.TargetActionTag));
 				CheckSlotInvariants();
 			}
-			else if (CategoryOf(Match.Reason) == ECadenceArcResolutionCategory::NoAction)
-			{
-				Outcome.SetNoAction(Match.Reason);
-			}
 			else
 			{
-				Outcome.SetRejected(Match.Reason);
+				Outcome = MakeFailedOutcome(Match.Reason);
 			}
 			return Outcome;
 		}
@@ -202,6 +172,87 @@ ECadenceArcHandshakeResult UCadenceArcResolver::SetBufferWindowState(const int64
 		return HandshakeResult;
 	}
 	bIsBufferWindowOpen = bShouldOpen;
+	return ECadenceArcHandshakeResult::Success;
+}
+
+ECadenceArcResolutionReason UCadenceArcResolver::ValidateInputEvent(const FCadenceArcInputEvent& Event)
+{
+	if (!Event.InputTag.IsValid())
+	{
+		return ECadenceArcResolutionReason::InvalidInputTag;
+	}
+	if (!Event.IsValidTimestamp())
+	{
+		return ECadenceArcResolutionReason::InvalidTimestamp;
+	}
+	// Tag 和时间已经单独检查过，这里 IsValid() 失败只可能是 Phase 或 HeldDuration 的问题
+	if (!Event.IsValid())
+	{
+		return ECadenceArcResolutionReason::InvalidInputEvent;
+	}
+	return ECadenceArcResolutionReason::None;
+}
+
+// 返回 None 表示这个状态可以接收输入；否则调用方直接用这个原因拒绝
+ECadenceArcResolutionReason UCadenceArcResolver::CheckInputAdmission(const double NowSeconds) const
+{
+	if (!IsInitialized())
+	{
+		return ECadenceArcResolutionReason::NotInitialized;
+	}
+	// AwaitingStart：候选请求还等着宿主答复，当前节点马上要变
+	if (State == ECadenceArcResolverState::AwaitingStart)
+	{
+		return ECadenceArcResolutionReason::RequestPending;
+	}
+	// Executing 必须开窗；Ready 随时可以接收
+	if (State == ECadenceArcResolverState::Executing && !bIsBufferWindowOpen)
+	{
+		return ECadenceArcResolutionReason::BufferWindowClosed;
+	}
+	// 已有按住资格时才谈冲突：时间倒退、漏 Advance、Charging／Charged 保护
+	return CheckPendingHoldConflict(NowSeconds);
+}
+
+FCadenceArcSubmitOutcome UCadenceArcResolver::MakeFailedOutcome(const ECadenceArcResolutionReason Reason)
+{
+	FCadenceArcSubmitOutcome Outcome;
+	if (CategoryOf(Reason) == ECadenceArcResolutionCategory::NoAction)
+	{
+		Outcome.SetNoAction(Reason);
+	}
+	else
+	{
+		Outcome.SetRejected(Reason);
+	}
+	return Outcome;
+}
+
+void UCadenceArcResolver::CommitNode(const FGameplayTag& NewActionTag)
+{
+	CurrentActionTag = NewActionTag;
+	// 节点一变就是一次新执行：旧资格即使还留在槽里，上下文编号也已经对不上了
+	++CurrentContextId;
+}
+
+ECadenceArcHandshakeResult UCadenceArcResolver::EndAction(
+	const int64 InRequestId, const ECadenceArcResolverState ExpectedState, const bool bReturnToEntry)
+{
+	const ECadenceArcHandshakeResult HandshakeResult = ValidateHandshake(InRequestId, ExpectedState);
+	if (HandshakeResult != ECadenceArcHandshakeResult::Success)
+	{
+		return HandshakeResult;
+	}
+	State = ECadenceArcResolverState::Ready;
+	OutstandingRequest = FCadenceArcActionRequest{};
+	// 退回入口是一次真正的节点变更，所以也换上下文；Rejected 保留原节点和原上下文
+	if (bReturnToEntry)
+	{
+		CommitNode(Graph->EntryActionTag);
+	}
+	ClearInputSlot();
+	ResetBufferWindow();
+	CheckSlotInvariants();
 	return ECadenceArcHandshakeResult::Success;
 }
 
@@ -279,9 +330,8 @@ ECadenceArcResolverResetResult UCadenceArcResolver::Reset()
 	switch (State)
 	{
 	case ECadenceArcResolverState::Ready:
-		CurrentActionTag = Graph->EntryActionTag;
 		OutstandingRequest = FCadenceArcActionRequest{};
-		++CurrentContextId;
+		CommitNode(Graph->EntryActionTag);
 		ClearInputSlot();
 		ResetBufferWindow();
 		break;
@@ -313,9 +363,8 @@ ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionStarted(const int64 
 	{
 		return HandshakeResult;
 	}
-	CurrentActionTag = OutstandingRequest.TargetActionTag;
 	State = ECadenceArcResolverState::Executing;
-	++CurrentContextId;
+	CommitNode(OutstandingRequest.TargetActionTag);
 	ClearInputSlot();
 	ResetBufferWindow();
 	return ECadenceArcHandshakeResult::Success;
@@ -323,17 +372,8 @@ ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionStarted(const int64 
 
 ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionRejected(const int64 InRequestId)
 {
-	const ECadenceArcHandshakeResult HandshakeResult = ValidateHandshake(
-		InRequestId, ECadenceArcResolverState::AwaitingStart);
-	if (HandshakeResult != ECadenceArcHandshakeResult::Success)
-	{
-		return HandshakeResult;
-	}
-	State = ECadenceArcResolverState::Ready;
-	OutstandingRequest = FCadenceArcActionRequest{};
-	ClearInputSlot();
-	ResetBufferWindow();
-	return ECadenceArcHandshakeResult::Success;
+	// 候选没被接受，已提交节点从头到尾没变过，所以不换上下文
+	return EndAction(InRequestId, ECadenceArcResolverState::AwaitingStart, /*bReturnToEntry=*/false);
 }
 
 FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(
@@ -448,36 +488,14 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(
 
 ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionCancelled(const int64 InRequestId)
 {
-	const ECadenceArcHandshakeResult HandshakeResult = ValidateHandshake(
-		InRequestId, ECadenceArcResolverState::Executing);
-	if (HandshakeResult != ECadenceArcHandshakeResult::Success)
-	{
-		return HandshakeResult;
-	}
-	State = ECadenceArcResolverState::Ready;
-	OutstandingRequest = FCadenceArcActionRequest{};
-	CurrentActionTag = Graph->EntryActionTag;
-	++CurrentContextId;
-	ClearInputSlot();
-	ResetBufferWindow();
-	return ECadenceArcHandshakeResult::Success;
+	// 连招被打断，退回入口重新开始，旧资格随上下文一起作废
+	return EndAction(InRequestId, ECadenceArcResolverState::Executing, /*bReturnToEntry=*/true);
 }
 
 ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionInterrupted(const int64 InRequestId)
 {
-	const ECadenceArcHandshakeResult HandshakeResult = ValidateHandshake(
-		InRequestId, ECadenceArcResolverState::Executing);
-	if (HandshakeResult != ECadenceArcHandshakeResult::Success)
-	{
-		return HandshakeResult;
-	}
-	State = ECadenceArcResolverState::Ready;
-	OutstandingRequest = FCadenceArcActionRequest{};
-	CurrentActionTag = Graph->EntryActionTag;
-	++CurrentContextId;
-	ClearInputSlot();
-	ResetBufferWindow();
-	return ECadenceArcHandshakeResult::Success;
+	// 与 Cancelled 的对外行为相同；保留两个入口是为了让宿主表达不同的语义来源
+	return EndAction(InRequestId, ECadenceArcResolverState::Executing, /*bReturnToEntry=*/true);
 }
 
 ECadenceArcHandshakeResult UCadenceArcResolver::OpenBufferWindow(const int64 InRequestId)
@@ -501,31 +519,27 @@ FCadenceArcHoldOutcome UCadenceArcResolver::BeginInputHold(
 		return Outcome;
 	}
 
-	// 身份与事件格式：这两项和 Resolver 当前状态无关，所以排在状态判断之前
-	if (!Token.IsValid() || !PressEvent.IsValid() || PressEvent.InputPhase != ECadenceArcInputPhase::Pressed)
+	// 事件格式与身份和 Resolver 当前状态无关，所以排在状态判断之前。
+	// 原因顺序与 SubmitInput 完全一致，由 ValidateInputEvent 单点定义。
+	if (const ECadenceArcResolutionReason Invalid = ValidateInputEvent(PressEvent);
+		Invalid != ECadenceArcResolutionReason::None)
+	{
+		Outcome.SetRejected(Invalid);
+		return Outcome;
+	}
+	// 申请资格必须带一个有效 Token 和一个按下事件
+	if (!Token.IsValid() || PressEvent.InputPhase != ECadenceArcInputPhase::Pressed)
 	{
 		Outcome.SetRejected(ECadenceArcResolutionReason::InvalidInputEvent);
 		return Outcome;
 	}
 
-	// AwaitingStart：候选请求还等着宿主答复，当前节点马上要变，资格无法绑定确定的源节点
-	if (State == ECadenceArcResolverState::AwaitingStart)
+	// 与 SubmitInput 共用的准入：AwaitingStart 不申请（当前节点马上要变，资格绑不到确定的源节点），
+	// Executing 必须开窗，随后才是时间倒退、漏 Advance 与蓄力保护
+	if (const ECadenceArcResolutionReason Admission = CheckInputAdmission(PressEvent.TimestampSeconds);
+		Admission != ECadenceArcResolutionReason::None)
 	{
-		Outcome.SetRejected(ECadenceArcResolutionReason::RequestPending);
-		return Outcome;
-	}
-	// Executing 必须开窗；Ready 随时可申请
-	if (State == ECadenceArcResolverState::Executing && !bIsBufferWindowOpen)
-	{
-		Outcome.SetRejected(ECadenceArcResolutionReason::BufferWindowClosed);
-		return Outcome;
-	}
-
-	// 已有资格的冲突：时间倒退、漏 Advance、蓄力保护
-	if (const ECadenceArcResolutionReason Conflict = CheckPendingHoldConflict(PressEvent.TimestampSeconds);
-		Conflict != ECadenceArcResolutionReason::None)
-	{
-		Outcome.SetRejected(Conflict);
+		Outcome.SetRejected(Admission);
 		return Outcome;
 	}
 
@@ -658,13 +672,9 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::ConsumeHoldRelease(
 	{
 		Outcome.SetRequestProduced(CommitRequest(ReleasedEvent.InputTag, Match.TargetActionTag));
 	}
-	else if (CategoryOf(Match.Reason) == ECadenceArcResolutionCategory::NoAction)
-	{
-		Outcome.SetNoAction(Match.Reason);
-	}
 	else
 	{
-		Outcome.SetRejected(Match.Reason);
+		Outcome = MakeFailedOutcome(Match.Reason);
 	}
 	return Outcome;
 }
