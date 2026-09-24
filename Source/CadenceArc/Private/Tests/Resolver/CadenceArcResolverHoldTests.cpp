@@ -4,6 +4,8 @@
 #include "Resolver/CadenceArcResolver.h"
 #include "Tests/CadenceArcTestSupport.h"
 
+#include <cmath>
+
 #if WITH_DEV_AUTOMATION_TESTS
 
 namespace CadenceArc::Tests
@@ -409,11 +411,36 @@ namespace CadenceArc::Tests
 			TestEqual(TEXT("Snapshot starts Holding"), static_cast<int32>(Snapshot.Stage),
 			          static_cast<int32>(ECadenceArcHoldStage::Holding));
 
-			// 端点取"大于等于"。直接用快照算出的阈值调用，避免浮点相加的边界摇摆。
-			const double ChargeStartTime = Snapshot.PressedTimestampSeconds + Snapshot.ChargeStartSeconds;
+			// 阈值时刻以 Resolver 报告的为准：它是"按住时长刚好达到"的最早 double，不一定等于
+			// Pressed + Seconds 的朴素求和（1.0 + 0.2 会向下舍入到时长还不足 0.2 的时刻）。
+			// 蓄力起点从探针的阶段通知读取，蓄满取快照；阈值两侧都锁住，确认端点是"大于等于"。
+			double ChargeStartTime = 0.0;
+			{
+				UCadenceArcResolver* Probe = MakeChargeResolver(*this);
+				GrantHoldInReady(*this, Probe, Token);
+				const FCadenceArcInputAdvanceOutcome Crossed = Probe->AdvanceInputTime(1.3);
+				if (!TestEqual(TEXT("Probe reports the charge start crossing"), Crossed.GetStageChanges().Num(), 1))
+				{
+					return false;
+				}
+				ChargeStartTime = Crossed.GetStageChanges()[0].EffectiveTimestampSeconds;
+			}
+			TestTrue(TEXT("Charge start is reached in held duration"),
+			         ChargeStartTime - Snapshot.PressedTimestampSeconds >= Snapshot.ChargeStartSeconds);
+			TestTrue(TEXT("Charge full is reached in held duration"),
+			         Snapshot.ChargeFullTimestampSeconds - Snapshot.PressedTimestampSeconds >= Snapshot.ChargeFullSeconds);
+
+			const double BeforeChargeStart = std::nextafter(ChargeStartTime, 0.0);
+			Resolver->AdvanceInputTime(BeforeChargeStart);
+			ExpectHoldStage(*this, TEXT("Just before charge start"), Resolver, ECadenceArcHoldStage::Holding,
+			                BeforeChargeStart);
 			Resolver->AdvanceInputTime(ChargeStartTime);
 			ExpectHoldStage(*this, TEXT("At charge start"), Resolver, ECadenceArcHoldStage::Charging,
 			                ChargeStartTime);
+			const double BeforeChargeFull = std::nextafter(Snapshot.ChargeFullTimestampSeconds, 0.0);
+			Resolver->AdvanceInputTime(BeforeChargeFull);
+			ExpectHoldStage(*this, TEXT("Just before charge full"), Resolver, ECadenceArcHoldStage::Charging,
+			                BeforeChargeFull);
 			Resolver->AdvanceInputTime(Snapshot.ChargeFullTimestampSeconds);
 			ExpectHoldStage(*this, TEXT("At charge full"), Resolver, ECadenceArcHoldStage::Charged,
 			                Snapshot.ChargeFullTimestampSeconds);
@@ -1179,6 +1206,238 @@ namespace CadenceArc::Tests
 			         ECadenceArcResolverInitResult::Success);
 			ExpectNoHold(*this, TEXT("Re-initialize"), Resolver);
 		}
+		return !HasAnyErrors();
+	}
+}
+
+// 本轮审查补充：不用二进制精确的 0.5 门槛掩盖绝对时间与持续时间往返的边界。
+namespace CadenceArc::Tests
+{
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcHoldDecimalThresholdReviewTest,
+		"CadenceArc.Resolver.Hold.Review.DecimalFullChargeBoundary",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcHoldDecimalThresholdReviewTest::RunTest(const FString& Parameters)
+	{
+		// 四条真实调用路线：Ready 自动释放、迟到的物理松手、执行中自动释放后消费、
+		// 有正保持时间时恰好在快照报告的蓄满时刻物理松手。
+		for (int32 Route = 0; Route < 4; ++Route)
+		{
+			UCadenceArcGraph* Graph = MakeChargeGraph(true, Route == 3 ? 2.0 : 0.0);
+			for (FCadenceArcNode& Node : Graph->Nodes)
+			{
+				for (FCadenceArcHoldChargeConfig& Config : Node.HoldChargeConfigs)
+				{
+					Config.ChargeStartSeconds = 0.1;
+				}
+				for (FCadenceArcTransition& Edge : Node.Transitions)
+				{
+					if (Edge.InputPhase != ECadenceArcInputPhase::Released) { continue; }
+					if (Edge.DurationRange.bHasMaxHeldDuration)
+					{
+						Edge.DurationRange.MaxHeldDurationSecondsExclusive = 0.2;
+					}
+					else { Edge.DurationRange.MinHeldDurationSeconds = 0.2; }
+				}
+			}
+			UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+			TestInit(*this, TEXT("Decimal threshold graph initializes"), Resolver->Initialize(Graph),
+				ECadenceArcResolverInitResult::Success);
+			FCadenceArcActionRequest Executing;
+			if (Route == 2 && !EnterExecutingWithOpenWindow(*this, Resolver, Executing)) { return false; }
+			const FCadenceArcInputToken Token = MakeHoldToken();
+			ExpectHoldOutcome(*this, TEXT("Decimal threshold grant"),
+				Resolver->BeginInputHold(Token, MakeHoldPress(Input_Heavy, 10.0)),
+				ECadenceArcHoldResult::Granted, ECadenceArcResolutionReason::None);
+			const double FullTime = Resolver->GetInputHoldSnapshot().ChargeFullTimestampSeconds;
+			FCadenceArcInputAdvanceOutcome Released;
+			if (Route == 1 || Route == 3)
+			{
+				if (Route == 3)
+				{
+					Resolver->AdvanceInputTime(FullTime);
+					TestEqual(TEXT("Snapshot is already Charged"),
+						static_cast<int32>(Resolver->GetInputHoldSnapshot().Stage),
+						static_cast<int32>(ECadenceArcHoldStage::Charged));
+				}
+				Released = Resolver->ReleaseInputHold(Token,
+					MakeHoldRelease(Input_Heavy, 10.0, Route == 1 ? 10.5 : FullTime));
+			}
+			else { Released = Resolver->AdvanceInputTime(FullTime); }
+			TestTrue(TEXT("Decimal threshold release is accepted"), Released.HasRelease());
+			AddInfo(FString::Printf(TEXT("Route=%d FullTime=%.17g Duration=%.17g Threshold=%.17g"),
+				Route, FullTime, Released.GetReleasedInput().HeldDurationSeconds, 0.2));
+			const FCadenceArcActionRequest Request = Route == 2
+				? Resolver->NotifyActionCompleted(Executing.RequestId, FullTime).GetNextActionRequest()
+				: Released.GetResolution().GetActionRequest();
+			TestTag(*this, *FString::Printf(TEXT("Route %d must choose the charged tier at full charge"), Route),
+				Request.TargetActionTag, Route == 2 ? Action_Finisher02 : Action_Heavy02);
+			ExpectNoHold(*this, TEXT("Decimal threshold release consumes qualification once"), Resolver);
+		}
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcHoldInvalidReplacementReviewTest,
+		"CadenceArc.Resolver.Hold.Review.InvalidGraphCannotReplaceGrant",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcHoldInvalidReplacementReviewTest::RunTest(const FString& Parameters)
+	{
+		// Initialize 之后修改资产：新资格必须重新校验自己的配置，不能吃掉旧有效资格。
+		for (int32 Mutation = 0; Mutation < 3; ++Mutation)
+		{
+			UCadenceArcGraph* Graph = MakeChargeGraph();
+			UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+			TestInit(*this, TEXT("Replacement graph initializes"), Resolver->Initialize(Graph),
+				ECadenceArcResolverInitResult::Success);
+			const FCadenceArcInputToken OriginalToken = MakeHoldToken();
+			if (!GrantHoldInReady(*this, Resolver, OriginalToken)) { return false; }
+			FCadenceArcNode& Root = Graph->Nodes[0];
+			if (Mutation == 0)
+			{
+				FCadenceArcHoldChargeConfig Duplicate = Root.HoldChargeConfigs[0];
+				Duplicate.MaxChargedHoldSeconds = 8.0;
+				Root.HoldChargeConfigs.Add(Duplicate);
+			}
+			else if (Mutation == 1)
+			{
+				Root.Transitions.Add(MakeHoldEdge(Input_Heavy, Action_Heavy02, 0.0, true, 0.5));
+			}
+			else
+			{
+				Root.HoldChargeConfigs.Reset();
+				Root.Transitions[1].DurationRange.MinHeldDurationSeconds = -1.0;
+			}
+			TArray<FText> Errors;
+			TestFalse(TEXT("Edited graph is demonstrably invalid"), Graph->ValidateGraph(Errors));
+			const FCadenceArcHoldOutcome Attempt = Resolver->BeginInputHold(MakeHoldToken(2),
+				MakeHoldPress(Input_Heavy, 1.1));
+			ExpectHoldOutcome(*this, *FString::Printf(TEXT("Invalid replacement %d"), Mutation), Attempt,
+				ECadenceArcHoldResult::Rejected, ECadenceArcResolutionReason::InvalidGraphConfiguration);
+			const FCadenceArcHoldSnapshot After = Resolver->GetInputHoldSnapshot();
+			TestTrue(TEXT("Invalid replacement preserves original token"), After.Token == OriginalToken);
+			TestEqual(TEXT("Invalid replacement preserves original press time"), After.PressedTimestampSeconds, 1.0);
+			TestEqual(TEXT("Invalid replacement does not allocate a request"), Resolver->GetOutstandingRequest().RequestId, int64{0});
+		}
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcHoldFrozenGrantReviewTest,
+		"CadenceArc.Resolver.Hold.Review.FrozenEdgesConfigAndAge",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcHoldFrozenGrantReviewTest::RunTest(const FString& Parameters)
+	{
+		// 已授予的资格继续按旧边和旧年龄上限消费，未来新申请才读取改动后的资产。
+		for (int32 Expired = 0; Expired < 2; ++Expired)
+		{
+			UCadenceArcGraph* Graph = MakeChargeGraph(true, 2.0, 0.25);
+			UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+			TestInit(*this, TEXT("Frozen graph initializes"), Resolver->Initialize(Graph), ECadenceArcResolverInitResult::Success);
+			FCadenceArcActionRequest Executing;
+			if (!EnterExecutingWithOpenWindow(*this, Resolver, Executing)) { return false; }
+			const FCadenceArcInputToken Token = MakeHoldToken();
+			if (!GrantHoldInReady(*this, Resolver, Token)) { return false; }
+			Graph->MaxBufferedInputAgeSeconds = Expired ? 0.0 : 0.01;
+			FCadenceArcNode& Source = Graph->Nodes[1];
+			Source.HoldChargeConfigs[0].MaxChargedHoldSeconds = 0.0;
+			for (FCadenceArcTransition& Edge : Source.Transitions)
+			{
+				if (Edge.InputPhase == ECadenceArcInputPhase::Released) { Edge.TargetActionTag = Action_Light01; }
+			}
+			TestFalse(TEXT("Edited zero hold limit does not release old grant early"), Resolver->AdvanceInputTime(1.5).HasRelease());
+			Resolver->ReleaseInputHold(Token, MakeHoldRelease(Input_Heavy, 1.0, 1.5));
+			const FCadenceArcActionCompletionOutcome Completed = Resolver->NotifyActionCompleted(
+				Executing.RequestId, Expired ? 2.0 : 1.75);
+			TestHandshake(*this, TEXT("Frozen grant completion"), Completed.GetHandshakeResult(), ECadenceArcHandshakeResult::Success);
+			TestBufferConsumption(*this, TEXT("Frozen age limit"), Completed,
+				Expired ? ECadenceArcResolutionCategory::NoAction : ECadenceArcResolutionCategory::RequestProduced,
+				Expired ? ECadenceArcResolutionReason::Expired : ECadenceArcResolutionReason::None);
+			if (!Expired) { TestTag(*this, TEXT("Frozen target survives asset edit"), Completed.GetNextActionRequest().TargetActionTag, Action_Finisher02); }
+		}
+		return !HasAnyErrors();
+	}
+}
+
+// 2026-09-24 满蓄力边界修复的回归：用十进制门槛扫大量按下时刻，锁定玩家可见的行为——
+// 保持上限为 0 时，自动释放必须出长按档。修复前 T满 = 0.8 时约 46% 的按下时刻会错选普通档；
+// 若 /fp:fast 把 HoldTiming 里的修正化简掉，这个测试同样会失败。
+namespace CadenceArc::Tests
+{
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcHoldDecimalThresholdSweepTest,
+		"CadenceArc.Resolver.Hold.DecimalThresholdSweep",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcHoldDecimalThresholdSweepTest::RunTest(const FString& Parameters)
+	{
+		// 与 P6-09 示例资产相同的门槛：T开始 0.2、T满 0.8、保持 0
+		UCadenceArcGraph* Graph = MakeChargeGraph(true, 0.0);
+		for (FCadenceArcNode& Node : Graph->Nodes)
+		{
+			for (FCadenceArcHoldChargeConfig& Config : Node.HoldChargeConfigs)
+			{
+				Config.ChargeStartSeconds = 0.2;
+			}
+			for (FCadenceArcTransition& Edge : Node.Transitions)
+			{
+				if (Edge.InputPhase != ECadenceArcInputPhase::Released) { continue; }
+				if (Edge.DurationRange.bHasMaxHeldDuration)
+				{
+					Edge.DurationRange.MaxHeldDurationSecondsExclusive = 0.8;
+				}
+				else
+				{
+					Edge.DurationRange.MinHeldDurationSeconds = 0.8;
+				}
+			}
+		}
+		UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+		if (!TestInit(*this, TEXT("Sweep graph initializes"), Resolver->Initialize(Graph),
+		              ECadenceArcResolverInitResult::Success))
+		{
+			return false;
+		}
+
+		constexpr int32 Samples = 2000;
+		int32 WrongTier = 0;
+		for (int32 Index = 0; Index < Samples; ++Index)
+		{
+			// 无理数步长的倍数对一小时取模：确定可复现，又能覆盖尾数满精度的 double
+			const double Pressed = std::fmod(Index * 11.326237921249264, 3600.0);
+			if (Resolver->BeginInputHold(MakeHoldToken(Index + 1), MakeHoldPress(Input_Heavy, Pressed)).GetResult()
+				!= ECadenceArcHoldResult::Granted)
+			{
+				AddError(FString::Printf(TEXT("Grant failed at press %.17g"), Pressed));
+				return false;
+			}
+
+			// 恰好在快照报告的截止时刻推进：端点"大于等于"，这一刻就应释放
+			const double Deadline = Resolver->GetInputHoldSnapshot().AutoReleaseTimestampSeconds;
+			const FCadenceArcInputAdvanceOutcome Released = Resolver->AdvanceInputTime(Deadline);
+			const FCadenceArcActionRequest Request = Released.GetResolution().GetActionRequest();
+			if (!Released.HasActionRequest() || Request.TargetActionTag != Action_Heavy02)
+			{
+				if (++WrongTier <= 5)
+				{
+					AddInfo(FString::Printf(TEXT("Wrong tier at press %.17g: released=%d duration=%.17g target=%s"),
+					                        Pressed, Released.HasRelease(),
+					                        Released.GetReleasedInput().HeldDurationSeconds,
+					                        *Request.TargetActionTag.ToString()));
+				}
+			}
+			// 拒绝候选请求，回到 Root 的 Ready，准备下一次按下
+			if (Released.HasActionRequest())
+			{
+				Resolver->NotifyActionRejected(Request.RequestId);
+			}
+		}
+		TestEqual(TEXT("Zero-hold auto release always picks the charged tier"), WrongTier, 0);
+		TestEqual(TEXT("Sweep leaves the resolver Ready at the entry node"),
+		          Resolver->GetCurrentActionTag().ToString(), Action_Root.GetTag().ToString());
 		return !HasAnyErrors();
 	}
 }

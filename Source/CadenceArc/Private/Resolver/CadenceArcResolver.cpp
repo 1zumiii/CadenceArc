@@ -25,7 +25,6 @@ namespace
 			return ECadenceArcResolutionCategory::Rejected; // 新增原因默认悲观
 		}
 	}
-
 }
 
 ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* InGraph)
@@ -550,7 +549,11 @@ FCadenceArcHoldOutcome UCadenceArcResolver::BeginInputHold(
 		Outcome.SetRejected(ECadenceArcResolutionReason::CurrentNodeNotFound);
 		return Outcome;
 	}
-
+	if (!SourceNode->IsValidTransition())
+	{
+		Outcome.SetRejected(ECadenceArcResolutionReason::InvalidGraphConfiguration);
+		return Outcome;
+	}
 	// 该 Tag 一条 Released 边都没有：无论按多久，松手时必然无匹配，当场拒绝
 	TArray<FCadenceArcTransition> ReleasedEdges;
 	SourceNode->CollectTransitions(PressEvent.InputTag, ECadenceArcInputPhase::Released, ReleasedEdges);
@@ -566,9 +569,7 @@ FCadenceArcHoldOutcome UCadenceArcResolver::BeginInputHold(
 	if (ChargeConfig)
 	{
 		// Initialize 之后资产仍可被编辑，所以这里按当前数据重新推导一次
-		if (!ChargeConfig->IsValid()
-			|| !CadenceArc::HoldTiming::DeriveChargeFullSeconds(ReleasedEdges, ChargeFullSeconds)
-			|| !(ChargeConfig->ChargeStartSeconds < ChargeFullSeconds))
+		if (!CadenceArc::HoldTiming::DeriveChargeFullSeconds(ReleasedEdges, ChargeFullSeconds))
 		{
 			Outcome.SetRejected(ECadenceArcResolutionReason::InvalidGraphConfiguration);
 			return Outcome;
