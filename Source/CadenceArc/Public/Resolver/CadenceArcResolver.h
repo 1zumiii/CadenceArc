@@ -206,4 +206,7 @@ public:
 	// 显式丢弃按住资格（失焦、解绑、翻滚／防御打断）。不合成松手，也不撤销已提交的候选。
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	FCadenceArcHoldOutcome CancelInputHold(const FCadenceArcInputToken& Token);
+	
+	// 可视化调试的只读查询接口
+	const UCadenceArcGraph* GetGraph() const { return Graph; }
 };

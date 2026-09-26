@@ -35,7 +35,7 @@ Available now:
 - resolver-side hold qualification: duration-based release tiers, time-derived charge stages, charge protection, and automatic release;
 - memory-only Unreal Automation Tests.
 
-In progress (Phase 6, Hold input): the resolver runtime is implemented and covered by automated tests. What remains is host integration -- binding a physical release in the Sandbox demo, injecting one game-time value per frame through `AdvanceInputTime`, and the phase acceptance pass. The Hold API is not yet exercised in a shipped host, so treat its ergonomics as unsettled.
+Phase 6 (Hold input) is complete: the resolver runtime is covered by automated tests, and the Sandbox demo drives it with real press, release, and cancel events and per-frame game time. The Hold API has not yet been exercised in a shipped game, so treat its ergonomics as unsettled. Next: Phase 7, a read-only runtime graph debugger.
 
 ## Why the Handshake Exists
 
@@ -187,6 +187,14 @@ Rules that follow from this model:
 - Release matching uses the qualification's frozen edge copies, so editing the asset while a hold is pending cannot change how that press is interpreted. Buffered-input age is measured from the release timestamp; an automatic release stamps the event with the deadline while age uses the time actually observed.
 - A release that matches no edge or that has expired still ends the qualification. It never reverts to a pending hold.
 - The held duration supplied to `ReleaseInputHold` must equal `TimestampSeconds - PressedTimestampSeconds` as a single `double` operation; the resolver does not trust a caller-supplied duration.
+- Threshold instants (charge start, full charge, automatic release) are the first `double` time at which the held duration reaches the threshold, not the plain sum `Pressed + Seconds`. A snapshot that reports `Charged` therefore always agrees with the tier a release at that instant selects, even for decimal thresholds such as 0.2 or 0.8.
+- `BeginInputHold` validates the source node with the shared graph validator before granting, so an asset edited into an invalid state after initialization returns `InvalidGraphConfiguration` and never replaces an existing valid qualification.
+
+### Host integration notes
+
+- A host that switches a key to `HoldRelease` must give the current node matching `Released` transitions for that tag. A node with only `Pressed` edges rejects `BeginInputHold` with `NoMatchingTransition`, and a `Pressed` edge on a `HoldRelease` tag is never matched.
+- A physical release that the host never delivers leaves the tracker pair and the qualification pending. The Sandbox demo cannot reach this, but a game that unpossesses and later re-possesses the same pawn while a key is held, or whose window-focus handling swallows the release, should call `CancelInputHold` and clear its tracker when control is lost. Whether Enhanced Input delivers `Completed` or `Canceled` in those cases has not been verified.
+- Unreal builds with MSVC `/fp:fast`. Code that deliberately inspects floating-point rounding must opt into precise semantics, as `CadenceArcHoldTiming.cpp` does with `#pragma float_control(precise, on)`.
 
 ## Editor Graph Validation
 
@@ -299,7 +307,7 @@ Tests live under `Source/CadenceArc/Private/Tests/` and build graphs in memory, 
 - `Resolver/CadenceArcResolverBufferTests.cpp` -- buffer windows, replacement, and consumption;
 - `Resolver/CadenceArcResolverLifecycleTests.cpp` -- lifecycle callbacks, cancellation, interruption, and reset;
 - `Resolver/CadenceArcResolverTimeTests.cpp` -- timestamps and buffer expiry;
-- `Resolver/CadenceArcResolverHoldTests.cpp` -- hold qualification, snapshots, stage crossings, manual and automatic release, protection, survival across completion, cancellation, and lifecycle cleanup;
+- `Resolver/CadenceArcResolverHoldTests.cpp` -- hold qualification, snapshots, stage crossings, manual and automatic release, protection, survival across completion, cancellation, lifecycle cleanup, decimal threshold boundaries, and frozen grant configuration;
 - `Graph/CadenceArcGraphValidationTests.cpp` -- graph topology validation;
 - `Graph/CadenceArcHoldValidationTests.cpp` -- phases, duration ranges, charge configuration, and naming redirects;
 - `Input/CadenceArcInputTrackerTests.cpp` -- press/release pairing, duration, tokens, and cleanup.
@@ -331,11 +339,10 @@ Redirects are verified for loading and enum lookup; round-trip compatibility of 
 
 ## Roadmap
 
-1. Finish Phase 6: Sandbox integration for physical release and per-frame host time, then the phase acceptance pass.
-2. Phase 7: a read-only runtime graph debugger showing state, candidate and committed transitions, buffer windows, and diagnostic history.
-3. Pause and directional input conditions, additional expiry policies, priorities, and reachability analysis.
-4. Optional execution adapters, including GAS.
-5. Input recording, replay, networking, and prediction research.
+1. Phase 7: a read-only runtime graph debugger showing state, candidate and committed transitions, buffer windows, hold qualifications, and diagnostic history.
+2. Pause and directional input conditions, additional expiry policies, priorities, and reachability analysis.
+3. Optional execution adapters, including GAS.
+4. Input recording, replay, networking, and prediction research.
 
 ## Requirements
 
