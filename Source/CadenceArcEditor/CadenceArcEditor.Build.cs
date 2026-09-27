@@ -21,6 +21,7 @@ public class CadenceArcEditor : ModuleRules
 			[
 				"Slate",
 				"SlateCore",
+				"InputCore",
 				"UnrealEd",
 				"WorkspaceMenuStructure",
 				"GameplayTags",
