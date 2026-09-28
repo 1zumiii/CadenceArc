@@ -6,6 +6,7 @@
 // - 环、回边、自环、平行边不改变已确定的列号，也不会死循环。
 // - 不可达节点放在"最深可达列 + 1"，行号按数组顺序；入口缺失时所有节点不可达，放在第 0 列。
 // - 每条 Transition 生成一条边，按节点顺序、Transition 顺序排列；目标不存在时标记为坏目标。
+// - 边携带 Transition 的 InputTag，平行边可据此区分。
 // - 重复 Tag 始终指向数组中的第一个节点。
 // - 同一张图每次构建结果完全一致。
 
@@ -297,6 +298,9 @@ namespace CadenceArc::Editor::Tests
 		{
 			ExpectEdge(*this, Layout, 0, 0, 0, 1);
 			ExpectEdge(*this, Layout, 1, 0, 1, 1);
+			// 平行边只能靠 InputTag 区分，布局必须原样带上
+			TestEqual(TEXT("Edge 0 input tag"), Layout.Edges[0].InputTag.ToString(), Layout_InputLight().ToString());
+			TestEqual(TEXT("Edge 1 input tag"), Layout.Edges[1].InputTag.ToString(), Layout_InputHeavy().ToString());
 		}
 		ExpectCell(*this, Layout, 1, 1, 0, true);
 		ExpectExtent(*this, TEXT("Parallel edges"), Layout, 2, 1);

@@ -114,10 +114,12 @@ FReply SCadenceArcDebuggerPanel::OnRefreshClicked()
 	// 若原选择仍在列表中就选中新建的那一项，否则清空选择。
 	// SetSelectedItem / ClearSelection 都会触发 OnResolverSelected，由它同步 SelectedResolver 和画布。
 	const TSharedPtr<FResolverOption>* Found = CurrentResolver
-		? Options.FindByPredicate([CurrentResolver](const TSharedPtr<FResolverOption>& Option)
-		{
-			return Option->Resolver == CurrentResolver;
-		})
+		? Options.FindByPredicate(
+			[CurrentResolver](const TSharedPtr<FResolverOption>& Option)
+			{
+				return Option->Resolver == CurrentResolver;
+			}
+		)
 		: nullptr;
 	if (Found)
 	{

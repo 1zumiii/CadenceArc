@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Layout/CadenceArcGraphLayout.h"
+#include "ViewModel/CadenceArcDebugView.h"
 #include "Widgets/SLeafWidget.h"
 
 class UCadenceArcGraph;
@@ -20,7 +21,9 @@ public:
 
 	SLATE_END_ARGS()
 
-	void Construct(const FArguments& InArgs) {}
+	void Construct(const FArguments& InArgs)
+	{
+	}
 
 	// 换图时重新布局并缓存标签；传 nullptr 表示清空
 	void SetGraph(const UCadenceArcGraph* InGraph);
@@ -34,6 +37,15 @@ public:
 		bool bParentEnabled) const override;
 
 private:
+	struct FCadenceArcGraphPalette
+	{
+		FLinearColor NormalNodeFill = FLinearColor(0.25f, 0.25f, 0.25f);
+		FLinearColor CommittedNodeFill = FLinearColor(0.10f, 0.55f, 0.20f);
+		FLinearColor CandidateOutline = FLinearColor(1.0f, 0.8f, 0.1f);
+		FLinearColor NormalEdge = FLinearColor(0.55f, 0.55f, 0.55f);
+		FLinearColor CandidateEdge = FLinearColor(1.0f, 0.8f, 0.1f);
+	};
+
 	FVector2D GetNodeTopLeft(const FCadenceArcLayoutNode& Node) const;
 	float GetNodeHeight(int32 NodeIndex) const;
 	// 出边在源节点右侧的引出点：第 TransitionIndex 个端口行的垂直中点
@@ -44,11 +56,12 @@ private:
 	// Slate 控件不参与 GC，引用 UObject 必须用弱引用
 	TWeakObjectPtr<const UCadenceArcGraph> Graph;
 	FCadenceArcGraphLayout Layout;
+	FCadenceArcDebugView DebugView;
 
 	// 以下都在 SetGraph 里一次算好，OnPaint 只读这些，不再按下标访问活资产：
 	// 面板开着时资产被删改，也不会拿旧下标越界。
-	TArray<int32> PortCounts;   // 每个节点的出边数，与 Layout.Nodes 同序
+	TArray<int32> PortCounts; // 每个节点的出边数，与 Layout.Nodes 同序
 	TArray<FString> EdgeLabels; // 每条边的条件文字，与 Layout.Edges 同序
 	float MaxNodeHeight = 0.f;
-	float RowSpacing = 0.f;     // 取全图最高节点，保证同一列上下不重叠
+	float RowSpacing = 0.f; // 取全图最高节点，保证同一列上下不重叠
 };
