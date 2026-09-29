@@ -11,6 +11,7 @@
 #include "Styling/CoreStyle.h"
 #include "UObject/UObjectIterator.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/SBoxPanel.h"
@@ -125,6 +126,29 @@ void SCadenceArcDebuggerPanel::Construct(const FArguments& InArgs)
 						]
 					]
 				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(12.f, 0.f, 0.f, 0.f)
+				[
+					SNew(SCheckBox)
+					.IsChecked_Lambda([this]()
+					{
+						return bFollowCommittedNode ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+					})
+					.OnCheckStateChanged_Lambda([this](const ECheckBoxState NewState)
+					{
+						bFollowCommittedNode = NewState == ECheckBoxState::Checked;
+						if (bFollowCommittedNode)
+						{
+							RequestFollow(); // 重新打开时立即把当前节点滚进视口
+						}
+					})
+					.ToolTipText(FText::FromString(TEXT("Scroll the committed node into view whenever it changes.")))
+					[
+						SNew(STextBlock).Text(FText::FromString(TEXT("Follow")))
+					]
+				]
 			]
 		]
 		+ SVerticalBox::Slot()
@@ -133,11 +157,11 @@ void SCadenceArcDebuggerPanel::Construct(const FArguments& InArgs)
 			+ SHorizontalBox::Slot()
 			.FillWidth(1.f)
 			[
-				SNew(SScrollBox)
+				SAssignNew(HorizontalScroll, SScrollBox)
 				.Orientation(Orient_Horizontal)
 				+ SScrollBox::Slot()
 				[
-					SNew(SScrollBox)
+					SAssignNew(VerticalScroll, SScrollBox)
 					.Orientation(Orient_Vertical)
 					+ SScrollBox::Slot()
 					[
@@ -290,7 +314,60 @@ void SCadenceArcDebuggerPanel::RefreshSelectedResolver()
 	}
 	Canvas->SetDebugView(LatestView);
 	ChargeTimeline->SetSnapshot(DisplayedHoldSnapshot);
+	FollowCommittedNode();
 	Invalidate(EInvalidateWidgetReason::Layout | EInvalidateWidgetReason::Paint);
+}
+
+void SCadenceArcDebuggerPanel::RequestFollow()
+{
+	LastFollowedNodeIndex = INDEX_NONE;
+}
+
+void SCadenceArcDebuggerPanel::FollowCommittedNode()
+{
+	const int32 NodeIndex = LatestView.CommittedNodeIndex;
+	if (NodeIndex != LastFollowedNodeIndex)
+	{
+		LastFollowedNodeIndex = NodeIndex;
+		PendingFollowFrames = 2;
+	}
+	if (!bFollowCommittedNode || PendingFollowFrames <= 0)
+	{
+		return;
+	}
+	--PendingFollowFrames;
+	const TOptional<FBox2D> Bounds = Canvas->GetNodeBounds(NodeIndex);
+	if (!Bounds.IsSet())
+	{
+		return;
+	}
+
+	// 节点已完整可见就不动；否则只滚到刚好露出节点并留一点边距，不强制居中，减少画面跳动
+	const auto ScrollAxis = [](SScrollBox& Scroll, const double Min, const double Max, const double Visible)
+	{
+		constexpr double Margin = 40.0;
+		if (Visible <= 0.0)
+		{
+			return; // 还没完成第一次排布，等下一帧
+		}
+		const double Offset = Scroll.GetScrollOffset();
+		double NewOffset = Offset;
+		if (Min - Margin < Offset || Max - Min + 2.0 * Margin > Visible)
+		{
+			NewOffset = Min - Margin;
+		}
+		else if (Max + Margin > Offset + Visible)
+		{
+			NewOffset = Max + Margin - Visible;
+		}
+		NewOffset = FMath::Clamp(NewOffset, 0.0, static_cast<double>(Scroll.GetScrollOffsetOfEnd()));
+		if (NewOffset != Offset)
+		{
+			Scroll.SetScrollOffset(static_cast<float>(NewOffset));
+		}
+	};
+	ScrollAxis(*HorizontalScroll, Bounds->Min.X, Bounds->Max.X, HorizontalScroll->GetCachedGeometry().GetLocalSize().X);
+	ScrollAxis(*VerticalScroll, Bounds->Min.Y, Bounds->Max.Y, VerticalScroll->GetCachedGeometry().GetLocalSize().Y);
 }
 
 FText SCadenceArcDebuggerPanel::GetStateText() const
@@ -438,6 +515,7 @@ void SCadenceArcDebuggerPanel::OnResolverSelected(TSharedPtr<FResolverOption> Re
 		DisplayedHoldSnapshot = FCadenceArcHoldSnapshot{};
 		LatestView = FCadenceArcDebugView{};
 		LastObservedActionTag = FGameplayTag{};
+		RequestFollow(); // 换了实例，即使节点下标相同也重新定位一次
 	}
 	RefreshSelectedResolver();
 	if (SelectedResolver.IsValid())

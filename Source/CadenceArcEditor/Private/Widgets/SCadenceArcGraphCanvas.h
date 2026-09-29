@@ -26,6 +26,8 @@ public:
 	}
 
 	const FCadenceArcGraphLayout& GetLayout() const { return Layout; }
+	// 节点在画布局部坐标中的矩形；索引无效时返回空，供面板把节点滚进视口
+	TOptional<FBox2D> GetNodeBounds(int32 NodeIndex) const;
 	void SetDebugView(const FCadenceArcDebugView& InDebugView);
 
 

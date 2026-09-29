@@ -1,5 +1,7 @@
 ﻿#include "CadenceArcEditorModule.h"
 
+#include "Framework/Docking/TabManager.h"
+#include "Widgets/Docking/SDockTab.h"
 #include "WorkspaceMenuStructure.h"
 #include "WorkspaceMenuStructureModule.h"
 #include "Widgets/SCadenceArcDebuggerPanel.h"

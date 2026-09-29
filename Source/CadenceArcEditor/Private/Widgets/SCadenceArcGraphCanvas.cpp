@@ -245,6 +245,16 @@ TArray<FVector2f> SCadenceArcGraphCanvas::BuildEdgePath(const FCadenceArcLayoutE
 	return SampleSplinePath(Start, End, Bend);
 }
 
+TOptional<FBox2D> SCadenceArcGraphCanvas::GetNodeBounds(const int32 NodeIndex) const
+{
+	if (!Layout.Nodes.IsValidIndex(NodeIndex))
+	{
+		return {};
+	}
+	const FVector2D TopLeft = GetNodeTopLeft(Layout.Nodes[NodeIndex]);
+	return FBox2D(TopLeft, TopLeft + FVector2D(NodeWidth, GetNodeHeight(NodeIndex)));
+}
+
 FVector2D SCadenceArcGraphCanvas::GetNodeTopLeft(const FCadenceArcLayoutNode& Node) const
 {
 	return FVector2D(Padding + Node.Column * ColumnSpacing, Padding + Node.Row * RowSpacing);
