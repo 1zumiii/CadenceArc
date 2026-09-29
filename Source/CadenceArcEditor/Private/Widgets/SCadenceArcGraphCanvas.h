@@ -25,6 +25,10 @@ public:
 	{
 	}
 
+	const FCadenceArcGraphLayout& GetLayout() const { return Layout; }
+	void SetDebugView(const FCadenceArcDebugView& InDebugView);
+
+
 	// 换图时重新布局并缓存标签；传 nullptr 表示清空
 	void SetGraph(const UCadenceArcGraph* InGraph);
 

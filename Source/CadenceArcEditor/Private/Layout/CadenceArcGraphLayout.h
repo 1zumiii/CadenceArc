@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
+#include "Graph/CadenceArcGraphTypes.h"
 
 class UCadenceArcGraph;
 
@@ -19,7 +20,8 @@ struct FCadenceArcLayoutEdge
 	int32 SourceNodeIndex = INDEX_NONE; // 源节点在 Graph->Nodes 中的索引
 	int32 TransitionIndex = INDEX_NONE; // 源节点 Transitions 中的索引
 	int32 TargetNodeIndex = INDEX_NONE; // 目标不存在时为 INDEX_NONE
-	FGameplayTag InputTag; // 构建时从 Transition 复制，下游匹配边时不必再按下标读活资产
+	// FGameplayTag InputTag; // 构建时从 Transition 复制，下游匹配边时不必再按下标读活资产
+	FCadenceArcTransition Transition; // 构建时从 Transition 复制，下游匹配边时不必再按下标读活资产
 	bool IsBrokenTarget() const { return TargetNodeIndex == INDEX_NONE; }
 };
 

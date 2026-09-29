@@ -18,10 +18,10 @@ void FCadenceArcEditorModule::StartupModule()
 		})
 	)
 	.SetDisplayName(
-		NSLOCTEXT("CadenceArcEditor", "DebuggerTabTitle", "CadenceArc Debugger"))
+		NSLOCTEXT("CadenceArcEditor", "DebuggerTabTitle", "Arc Debugger")) // Minor Tab 最宽 160px，全名会被省略；全名见 Tooltip
 	.SetTooltipText(
 		NSLOCTEXT("CadenceArcEditor", "DebuggerTabTooltip", 
-			"Read-only runtime view of a CadenceArc resolver."))
+			"CadenceArc Debugger: read-only runtime view of a CadenceArc resolver."))
 	.SetGroup(WorkspaceMenu::GetMenuStructure().GetDeveloperToolsDebugCategory());
 	
 }

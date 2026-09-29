@@ -33,7 +33,7 @@ namespace
 			const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
 			if (Edge.SourceNodeIndex != SourceIndex ||
 				Edge.TargetNodeIndex != TargetIndex ||
-				Edge.InputTag != InputTag)
+				Edge.Transition.InputTag != InputTag)
 			{
 				continue;
 			}

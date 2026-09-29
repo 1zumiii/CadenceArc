@@ -299,8 +299,8 @@ namespace CadenceArc::Editor::Tests
 			ExpectEdge(*this, Layout, 0, 0, 0, 1);
 			ExpectEdge(*this, Layout, 1, 0, 1, 1);
 			// 平行边只能靠 InputTag 区分，布局必须原样带上
-			TestEqual(TEXT("Edge 0 input tag"), Layout.Edges[0].InputTag.ToString(), Layout_InputLight().ToString());
-			TestEqual(TEXT("Edge 1 input tag"), Layout.Edges[1].InputTag.ToString(), Layout_InputHeavy().ToString());
+			TestEqual(TEXT("Edge 0 input tag"), Layout.Edges[0].Transition.InputTag.ToString(), Layout_InputLight().ToString());
+			TestEqual(TEXT("Edge 1 input tag"), Layout.Edges[1].Transition.InputTag.ToString(), Layout_InputHeavy().ToString());
 		}
 		ExpectCell(*this, Layout, 1, 1, 0, true);
 		ExpectExtent(*this, TEXT("Parallel edges"), Layout, 2, 1);

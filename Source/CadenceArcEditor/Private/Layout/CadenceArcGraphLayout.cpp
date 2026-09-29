@@ -117,7 +117,7 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph)
 			FCadenceArcLayoutEdge Edge;
 			Edge.SourceNodeIndex = SourceIndex;
 			Edge.TransitionIndex = TransitionIndex;
-			Edge.InputTag = Transitions[TransitionIndex].InputTag;
+			Edge.Transition = Transitions[TransitionIndex];
 			if (const int32* TargetIndex = NodeIndexMap.Find(Transitions[TransitionIndex].TargetActionTag))
 			{
 				Edge.TargetNodeIndex = *TargetIndex;
