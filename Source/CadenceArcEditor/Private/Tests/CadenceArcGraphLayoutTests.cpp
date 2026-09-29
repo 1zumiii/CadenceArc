@@ -123,7 +123,106 @@ namespace CadenceArc::Editor::Tests
 		return bPassed;
 	}
 
-	// 对任意布局都应成立的几何性质：画布据此决定走线，不成立就会出现穿过节点的连线
+	// 线段是否进入矩形（Liang-Barsky 裁剪）。矩形按线路安全边距外扩后再判断。
+	static bool SegmentHitsBox(const FVector2D& A, const FVector2D& B, const FBox2D& Box)
+	{
+		double T0 = 0.0;
+		double T1 = 1.0;
+		const FVector2D Delta = B - A;
+		const double P[4] = {-Delta.X, Delta.X, -Delta.Y, Delta.Y};
+		const double Q[4] = {A.X - Box.Min.X, Box.Max.X - A.X, A.Y - Box.Min.Y, Box.Max.Y - A.Y};
+		for (int32 Index = 0; Index < 4; ++Index)
+		{
+			if (FMath::IsNearlyZero(P[Index]))
+			{
+				if (Q[Index] < 0.0)
+				{
+					return false;
+				}
+				continue;
+			}
+			const double T = Q[Index] / P[Index];
+			if (P[Index] < 0.0)
+			{
+				T0 = FMath::Max(T0, T);
+			}
+			else
+			{
+				T1 = FMath::Min(T1, T);
+			}
+			if (T0 > T1)
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	// 实际绘制路径的几何性质，检查的是画布照着画的点列本身，而不只是途经点：
+	// - 每条边从源节点端口出发；有效目标的边终止于目标左边界、标题行高度以内；
+	// - 路径的每一小段都不进入任何无关节点（外扩线路安全边距）；
+	// - 同一列真实节点按行号自上而下排列，彼此不重叠并留出最小间距。
+	static void ExpectGeometry(FAutomationTestBase& Test, const FCadenceArcGraphLayout& Layout)
+	{
+		const FCadenceArcLayoutParams Params;
+		constexpr double Clearance = 2.0;
+		for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
+		{
+			const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
+			if (!Test.TestTrue(*FString::Printf(TEXT("Edge %d has a path"), EdgeIndex), Edge.Path.Num() >= 2))
+			{
+				continue;
+			}
+			const FCadenceArcLayoutNode& Source = Layout.Nodes[Edge.SourceNodeIndex];
+			const FVector2D ExpectedPort = Source.Position + FVector2D(
+				Params.NodeWidth, Params.HeaderHeight + (Edge.TransitionIndex + 0.5) * Params.PortHeight);
+			Test.TestTrue(*FString::Printf(TEXT("Edge %d starts at its port"), EdgeIndex),
+			              Edge.Path[0].Equals(ExpectedPort, 1.e-6));
+			if (!Edge.IsBrokenTarget())
+			{
+				const FCadenceArcLayoutNode& Target = Layout.Nodes[Edge.TargetNodeIndex];
+				const FVector2D End = Edge.Path.Last();
+				Test.TestTrue(*FString::Printf(TEXT("Edge %d ends on the target title's left edge"), EdgeIndex),
+				              FMath::IsNearlyEqual(End.X, Target.Position.X, 1.e-6)
+				              && End.Y >= Target.Position.Y && End.Y <= Target.Position.Y + Params.HeaderHeight);
+			}
+			for (const FCadenceArcLayoutNode& Node : Layout.Nodes)
+			{
+				if (Node.NodeIndex == Edge.SourceNodeIndex || Node.NodeIndex == Edge.TargetNodeIndex)
+				{
+					continue;
+				}
+				const FBox2D Obstacle(Node.Position - FVector2D(Clearance), Node.Position + Node.Size + FVector2D(Clearance));
+				bool bHit = false;
+				for (int32 Point = 1; Point < Edge.Path.Num() && !bHit; ++Point)
+				{
+					bHit = SegmentHitsBox(Edge.Path[Point - 1], Edge.Path[Point], Obstacle);
+				}
+				Test.TestFalse(*FString::Printf(TEXT("Edge %d crosses unrelated node %d"), EdgeIndex, Node.NodeIndex), bHit);
+			}
+		}
+
+		TMap<int32, TArray<const FCadenceArcLayoutNode*>> ByColumn;
+		for (const FCadenceArcLayoutNode& Node : Layout.Nodes)
+		{
+			ByColumn.FindOrAdd(Node.Column).Add(&Node);
+		}
+		for (TPair<int32, TArray<const FCadenceArcLayoutNode*>>& Pair : ByColumn)
+		{
+			Pair.Value.Sort([](const FCadenceArcLayoutNode& A, const FCadenceArcLayoutNode& B) { return A.Row < B.Row; });
+			for (int32 Index = 1; Index < Pair.Value.Num(); ++Index)
+			{
+				const FCadenceArcLayoutNode& Above = *Pair.Value[Index - 1];
+				const FCadenceArcLayoutNode& Below = *Pair.Value[Index];
+				Test.TestTrue(*FString::Printf(TEXT("Node %d is below node %d with a gap"), Below.NodeIndex, Above.NodeIndex),
+				              Below.Position.Y >= Above.Position.Y + Above.Size.Y + Params.ChannelGap - 1.e-6);
+				Test.TestTrue(*FString::Printf(TEXT("Node %d shares its column's x"), Below.NodeIndex),
+				              Below.Position.X == Above.Position.X);
+			}
+		}
+	}
+
+	// 对任意布局都应成立的性质：画布据此决定走线，不成立就会出现穿过节点的连线
 	static void ExpectLayoutInvariants(FAutomationTestBase& Test, const FCadenceArcGraphLayout& Layout)
 	{
 		TSet<TPair<int32, int32>> Cells;
@@ -149,6 +248,7 @@ namespace CadenceArc::Editor::Tests
 			NumLanes += Edge.ReturnLane != INDEX_NONE ? 1 : 0;
 		}
 		Test.TestEqual(TEXT("Lane count matches"), Layout.NumReturnLanes, NumLanes);
+		ExpectGeometry(Test, Layout);
 	}
 
 	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -458,6 +558,9 @@ namespace CadenceArc::Editor::Tests
 				TestEqual(*FString::Printf(TEXT("Node %d row stable"), Index),
 				          Second.Nodes[Index].Row, First.Nodes[Index].Row);
 				TestTrue(*FString::Printf(TEXT("Node %d reachability stable"), Index), Second.Nodes[Index].bReachable == First.Nodes[Index].bReachable);
+				TestTrue(*FString::Printf(TEXT("Node %d position stable"), Index),
+				         Second.Nodes[Index].Position == First.Nodes[Index].Position
+				         && Second.Nodes[Index].Size == First.Nodes[Index].Size);
 			}
 		}
 		if (TestEqual(TEXT("Same edge count"), Second.Edges.Num(), First.Edges.Num()))
@@ -470,6 +573,8 @@ namespace CadenceArc::Editor::Tests
 				          Second.Edges[Index].ReturnLane, First.Edges[Index].ReturnLane);
 				TestTrue(*FString::Printf(TEXT("Edge %d back flag stable"), Index),
 				         Second.Edges[Index].bIsBackEdge == First.Edges[Index].bIsBackEdge);
+				TestTrue(*FString::Printf(TEXT("Edge %d path stable point by point"), Index),
+				         Second.Edges[Index].Path == First.Edges[Index].Path);
 			}
 		}
 		TestEqual(TEXT("Same lane count"), Second.NumReturnLanes, First.NumReturnLanes);
@@ -592,6 +697,174 @@ namespace CadenceArc::Editor::Tests
 		TestEqual(TEXT("Two return lanes"), Layout.NumReturnLanes, 2);
 		ExpectExtent(*this, TEXT("Combo shape"), Layout, 6, 2);
 		ExpectLayoutInvariants(*this, Layout);
+		return !HasAnyErrors();
+	}
+
+	// ---- 几何：长边通道、接入点错开、混合高度、视口跟随 ----
+
+	// 仿照 Sandbox 的 DA_TestComboGraphCombo（真实形状：分支树 + 共享终结技 + 一条循环回边）。
+	// 布局只比较 Tag 是否相同，这里借用两个输入 Tag 充当第 9、10 个动作节点。
+	static UCadenceArcGraph* MakeRealComboGraph()
+	{
+		const FGameplayTag Root = Layout_A(), SkillA = Layout_B(), SkillD = Layout_C(), SkillE = Layout_D();
+		const FGameplayTag SkillB = Layout_E(), SkillF = Layout_F(), SkillC = Layout_G();
+		const FGameplayTag FinalA = Layout_Missing(), FinalB = Layout_InputLight(), FinalC = Layout_InputHeavy();
+		UCadenceArcGraph* Graph = MakeLayoutGraph(
+			Root, {Root, SkillA, SkillD, SkillE, SkillB, SkillF, SkillC, FinalA, FinalB, FinalC});
+		AddLayoutEdge(Graph, 0, SkillA);
+		AddLayoutEdge(Graph, 0, SkillB);
+		AddLayoutEdge(Graph, 0, SkillC);
+		AddLayoutEdge(Graph, 1, SkillD);
+		AddLayoutEdge(Graph, 1, FinalA);
+		AddLayoutEdge(Graph, 1, FinalB);
+		AddLayoutEdge(Graph, 2, SkillE);
+		AddLayoutEdge(Graph, 2, FinalB);
+		AddLayoutEdge(Graph, 3, SkillA); // 循环回第一段
+		AddLayoutEdge(Graph, 3, FinalB);
+		AddLayoutEdge(Graph, 3, FinalC);
+		AddLayoutEdge(Graph, 4, SkillF);
+		AddLayoutEdge(Graph, 4, FinalA);
+		AddLayoutEdge(Graph, 5, FinalA);
+		AddLayoutEdge(Graph, 6, FinalC);
+		return Graph;
+	}
+
+	// 路径相邻两小段之间的最大转角（度）。光滑曲线的采样点之间只有小角度变化，折角会是几十度。
+	static double MaxTurnDegrees(const TArray<FVector2D>& Path)
+	{
+		double MaxTurn = 0.0;
+		for (int32 Point = 2; Point < Path.Num(); ++Point)
+		{
+			const FVector2D In = (Path[Point - 1] - Path[Point - 2]).GetSafeNormal();
+			const FVector2D Out = (Path[Point] - Path[Point - 1]).GetSafeNormal();
+			const double Cosine = FMath::Clamp(FVector2D::DotProduct(In, Out), -1.0, 1.0);
+			MaxTurn = FMath::Max(MaxTurn, FMath::RadiansToDegrees(FMath::Acos(Cosine)));
+		}
+		return MaxTurn;
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcLayoutLongEdgeChannelTest,
+		"CadenceArc.Editor.Layout.LongEdgesUseChannels",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcLayoutLongEdgeChannelTest::RunTest(const FString& Parameters)
+	{
+		// 共享终结技带来跨多列的长边（例如 SkillA -> FinalB、SkillC -> FinalC）。
+		// 长边在中间列各有一个通道为它留出空间，整条路径是光滑曲线，且不压在任何无关节点上。
+		const FCadenceArcGraphLayout Layout = BuildGraphLayout(*MakeRealComboGraph());
+		const int32 ExpectedColumns[] = {0, 1, 2, 3, 1, 2, 1, 3, 4, 4};
+		for (int32 Index = 0; Index < 10; ++Index)
+		{
+			TestEqual(*FString::Printf(TEXT("Node %d column"), Index), Layout.Nodes[Index].Column, ExpectedColumns[Index]);
+		}
+		int32 LongEdges = 0;
+		for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
+		{
+			const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
+			if (Edge.ReturnLane != INDEX_NONE)
+			{
+				continue;
+			}
+			LongEdges += Layout.Nodes[Edge.TargetNodeIndex].Column - Layout.Nodes[Edge.SourceNodeIndex].Column > 1 ? 1 : 0;
+			// 前向边是一条光滑曲线：没有折角（阈值远小于直角拐弯，远大于曲线采样间的转角）
+			TestTrue(*FString::Printf(TEXT("Edge %d is a smooth curve"), EdgeIndex), MaxTurnDegrees(Edge.Path) < 35.0);
+		}
+		TestTrue(TEXT("The combo has long edges to route"), LongEdges >= 3);
+		TestEqual(TEXT("Only the loop back uses a return lane"), Layout.NumReturnLanes, 1);
+		ExpectLayoutInvariants(*this, Layout);
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcLayoutEntrySpreadTest,
+		"CadenceArc.Editor.Layout.SharedTargetEntriesSpread",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcLayoutEntrySpreadTest::RunTest(const FString& Parameters)
+	{
+		// FinalB 有三条入边（SkillA、SkillD、SkillE）：接入点各不相同，都在标题行内（由几何检查保证）
+		const FCadenceArcGraphLayout Layout = BuildGraphLayout(*MakeRealComboGraph());
+		constexpr int32 FinalB = 8;
+		TArray<double> EntryYs;
+		for (const FCadenceArcLayoutEdge& Edge : Layout.Edges)
+		{
+			if (Edge.TargetNodeIndex == FinalB)
+			{
+				EntryYs.Add(Edge.Path.Last().Y);
+			}
+		}
+		if (TestEqual(TEXT("FinalB has three incoming edges"), EntryYs.Num(), 3))
+		{
+			EntryYs.Sort();
+			TestTrue(TEXT("Entry points are distinct"), EntryYs[0] < EntryYs[1] && EntryYs[1] < EntryYs[2]);
+		}
+		ExpectLayoutInvariants(*this, Layout);
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcLayoutMixedHeightTest,
+		"CadenceArc.Editor.Layout.MixedHeightsDoNotOverlap",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcLayoutMixedHeightTest::RunTest(const FString& Parameters)
+	{
+		// 同一列里一个 5 个端口的高节点夹在无端口节点之间，还有穿过这一列的长边通道：
+		// 按各自实际高度压紧，互不重叠，连线也不压到它们
+		UCadenceArcGraph* Graph = MakeLayoutGraph(
+			Layout_A(), {Layout_A(), Layout_B(), Layout_C(), Layout_D(), Layout_E(), Layout_F()});
+		AddLayoutEdge(Graph, 0, Layout_B());
+		AddLayoutEdge(Graph, 0, Layout_C());
+		AddLayoutEdge(Graph, 0, Layout_D());
+		AddLayoutEdge(Graph, 0, Layout_F(), Layout_InputHeavy()); // A -> F 跨两列
+		for (int32 Port = 0; Port < 4; ++Port)
+		{
+			AddLayoutEdge(Graph, 2, Layout_E(), Port % 2 == 0 ? Layout_InputLight() : Layout_InputHeavy());
+		}
+		AddLayoutEdge(Graph, 2, Layout_F());
+		AddLayoutEdge(Graph, 4, Layout_F());
+		const FCadenceArcGraphLayout Layout = BuildGraphLayout(*Graph);
+
+		const FCadenceArcLayoutParams Params;
+		TestEqual(TEXT("Tall node height follows its ports"), Layout.Nodes[2].Size.Y,
+		          static_cast<double>(Params.HeaderHeight + 5 * Params.PortHeight + Params.NodeBottomPad));
+		TestEqual(TEXT("Portless node is a bare title"), Layout.Nodes[1].Size.Y, static_cast<double>(Params.HeaderHeight));
+		ExpectLayoutInvariants(*this, Layout);
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcLayoutFollowOffsetTest,
+		"CadenceArc.Editor.Layout.FollowOffset",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcLayoutFollowOffsetTest::RunTest(const FString& Parameters)
+	{
+		constexpr double Visible = 500.0;
+		constexpr double Margin = 40.0;
+		constexpr double MaxOffset = 5000.0;
+		// 整组已经完整可见：不滚动
+		TestEqual(TEXT("Visible group stays"),
+		          ComputeFollowOffset(100.0, Visible, 200.0, 300.0, 200.0, 450.0, Margin, MaxOffset), 100.0);
+		// 整组放得下但在右侧视口外：只移到刚好露出整组
+		TestEqual(TEXT("Group scrolls in minimally"),
+		          ComputeFollowOffset(0.0, Visible, 600.0, 700.0, 600.0, 900.0, Margin, MaxOffset), 440.0);
+		// 整组放不下：已提交节点必须完整可见，其余朝整组中心靠
+		const double Wide = ComputeFollowOffset(0.0, Visible, 600.0, 700.0, 100.0, 1500.0, Margin, MaxOffset);
+		TestEqual(TEXT("Too wide group centers within the primary's range"), Wide, 550.0);
+		TestTrue(TEXT("Primary stays fully visible"), 600.0 - Margin >= Wide && 700.0 + Margin <= Wide + Visible);
+		// 已提交节点本身比视口还大：对齐它的开头
+		TestEqual(TEXT("Oversized primary aligns its start"),
+		          ComputeFollowOffset(0.0, Visible, 300.0, 1000.0, 300.0, 1000.0, Margin, MaxOffset), 260.0);
+		// 结果限制在可滚动范围内
+		TestEqual(TEXT("Clamped to the end"),
+		          ComputeFollowOffset(0.0, Visible, 600.0, 700.0, 600.0, 900.0, Margin, 200.0), 200.0);
+		TestEqual(TEXT("Clamped to the start"),
+		          ComputeFollowOffset(300.0, Visible, 10.0, 60.0, 10.0, 60.0, Margin, MaxOffset), 0.0);
+		// 视口还没排布（尺寸为 0）：保持原样，等下一帧
+		TestEqual(TEXT("Unmeasured viewport keeps offset"),
+		          ComputeFollowOffset(123.0, 0.0, 600.0, 700.0, 600.0, 900.0, Margin, MaxOffset), 123.0);
 		return !HasAnyErrors();
 	}
 }

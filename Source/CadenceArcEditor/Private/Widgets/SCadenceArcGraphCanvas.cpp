@@ -7,18 +7,6 @@
 
 namespace
 {
-	constexpr float NodeWidth = 180.f;
-	constexpr float HeaderHeight = 24.f; // 节点标题行
-	constexpr float PortHeight = 18.f; // 每条出边一行
-	constexpr float NodeBottomPad = 4.f; // 有端口的节点底部留白
-	constexpr float ColumnSpacing = 300.f; // 相邻两列左边缘的距离，剩下的空间留给曲线
-	constexpr float RowGap = 28.f; // 同一列上下两个节点之间的空隙
-	constexpr float Padding = 24.f;
-	constexpr float LoopMargin = 14.f; // 自环绕出节点的距离
-	constexpr float BrokenStubLength = 24.f;
-	constexpr float ReturnLaneTopGap = 20.f; // 节点区域（含自环）与第一条底部通道的距离
-	constexpr float ReturnLaneSpacing = 12.f; // 相邻底部通道的距离
-	constexpr float ReturnStub = 12.f; // 回边离开端口、接近目标时在列间空隙里的水平距离
 	constexpr float UnfocusedAlpha = 0.25f; // 与当前焦点无关的边淡化到这个透明度
 
 	const FLinearColor BodyColor(0.16f, 0.16f, 0.20f);
@@ -79,21 +67,6 @@ namespace
 		return FVector2f(static_cast<float>(Point.X), static_cast<float>(Point.Y));
 	}
 
-	TArray<FVector2f> SampleSplinePath(const FVector2D& Start, const FVector2D& End, const double Bend)
-	{
-		constexpr int32 NumSegments = 48;
-		const FVector2D Tangent(Bend, 0.0);
-		TArray<FVector2f> Points;
-		Points.Reserve(NumSegments + 1);
-		for (int32 Index = 0; Index <= NumSegments; ++Index)
-		{
-			const float Alpha = static_cast<float>(Index) / NumSegments;
-			const FVector2D Point = FMath::CubicInterp(Start, Tangent, End, Tangent, Alpha);
-			Points.Add(ToFloatPoint(Point));
-		}
-		return Points;
-	}
-
 	// 按累计路径长度截取，不直接按 Hermite 参数截取，视觉进度才会匀速沿曲线前进。
 	TArray<FVector2f> TakePathPrefix(const TArray<FVector2f>& Path, const float Fraction)
 	{
@@ -148,6 +121,44 @@ namespace
 			OutDrawElements, Layer, CanvasGeometry, MoveTemp(Path),
 			ESlateDrawEffect::None, DashedColor, bCurrentRelease ? 3.f : 2.f, 8.f);
 	}
+
+	// 终点箭头：沿路径最后一段的方向，落在目标左侧的空隙里
+	void DrawArrowHead(
+		FSlateWindowElementList& OutDrawElements, const int32 Layer, const FPaintGeometry& CanvasGeometry,
+		const TArray<FVector2D>& Path, const FLinearColor& Color, const float Thickness)
+	{
+		if (Path.Num() < 2)
+		{
+			return;
+		}
+		const FVector2D Tip = Path.Last();
+		const FVector2D Direction = (Tip - Path[Path.Num() - 2]).GetSafeNormal();
+		if (Direction.IsNearlyZero())
+		{
+			return;
+		}
+		const FVector2D Normal(-Direction.Y, Direction.X);
+		constexpr double Length = 7.0;
+		constexpr double HalfWidth = 4.0;
+		FSlateDrawElement::MakeLines(
+			OutDrawElements, Layer, CanvasGeometry,
+			TArray<FVector2f>{
+				ToFloatPoint(Tip - Direction * Length + Normal * HalfWidth), ToFloatPoint(Tip),
+				ToFloatPoint(Tip - Direction * Length - Normal * HalfWidth)
+			},
+			ESlateDrawEffect::None, Color, true, Thickness);
+	}
+
+	TArray<FVector2f> ToFloatPath(const TArray<FVector2D>& Path)
+	{
+		TArray<FVector2f> Points;
+		Points.Reserve(Path.Num());
+		for (const FVector2D& Point : Path)
+		{
+			Points.Add(ToFloatPoint(Point));
+		}
+		return Points;
+	}
 }
 
 void SCadenceArcGraphCanvas::SetDebugView(const FCadenceArcDebugView& InDebugView)
@@ -160,22 +171,13 @@ void SCadenceArcGraphCanvas::SetGraph(const UCadenceArcGraph* InGraph)
 {
 	DebugView = FCadenceArcDebugView();
 	Graph = InGraph;
-	Layout = InGraph ? BuildGraphLayout(*InGraph) : FCadenceArcGraphLayout{};
+	Layout = InGraph ? BuildGraphLayout(*InGraph, Params) : FCadenceArcGraphLayout{};
 
-	PortCounts.Init(0, Layout.Nodes.Num());
 	EdgeLabels.Reset(Layout.Edges.Num());
 	for (const FCadenceArcLayoutEdge& Edge : Layout.Edges)
 	{
-		++PortCounts[Edge.SourceNodeIndex];
 		EdgeLabels.Add(FormatTransitionLabel(Edge.Transition));
 	}
-
-	MaxNodeHeight = 0.f;
-	for (int32 NodeIndex = 0; NodeIndex < Layout.Nodes.Num(); ++NodeIndex)
-	{
-		MaxNodeHeight = FMath::Max(MaxNodeHeight, GetNodeHeight(NodeIndex));
-	}
-	RowSpacing = MaxNodeHeight + RowGap;
 
 	// 尺寸可能变了（布局阶段），画面也要重画（绘制阶段）
 	Invalidate(EInvalidateWidgetReason::Layout | EInvalidateWidgetReason::Paint);
@@ -183,66 +185,7 @@ void SCadenceArcGraphCanvas::SetGraph(const UCadenceArcGraph* InGraph)
 
 FVector2D SCadenceArcGraphCanvas::ComputeDesiredSize(float) const
 {
-	if (Layout.Nodes.IsEmpty())
-	{
-		return FVector2D(2.f * Padding, 2.f * Padding);
-	}
-	// 右侧留出自环和坏目标短线的位置，下方留出自环绕过节点底部的位置，再往下是回边通道
-	const float Width = (Layout.NumColumns - 1) * ColumnSpacing + NodeWidth + BrokenStubLength + 16.f;
-	float Height = (Layout.MaxRows - 1) * RowSpacing + MaxNodeHeight + LoopMargin;
-	if (Layout.NumReturnLanes > 0)
-	{
-		Height += ReturnLaneTopGap + (Layout.NumReturnLanes - 1) * ReturnLaneSpacing;
-	}
-	return FVector2D(Width + 2.f * Padding, Height + 2.f * Padding);
-}
-
-double SCadenceArcGraphCanvas::GetReturnLaneY(const int32 Lane) const
-{
-	const double NodesBottom = Padding + (Layout.MaxRows - 1) * RowSpacing + MaxNodeHeight + LoopMargin;
-	return NodesBottom + ReturnLaneTopGap + Lane * ReturnLaneSpacing;
-}
-
-TArray<FVector2f> SCadenceArcGraphCanvas::BuildEdgePath(const FCadenceArcLayoutEdge& Edge) const
-{
-	const FVector2D Start = GetPortAnchor(Edge);
-	if (Edge.IsBrokenTarget())
-	{
-		// 目标不存在：一小段短线，不猜它原本想连到哪里
-		return {ToFloatPoint(Start), ToFloatPoint(Start + FVector2D(BrokenStubLength, 0.f))};
-	}
-
-	const FVector2D End = GetInputAnchor(Edge.TargetNodeIndex);
-	if (Edge.SourceNodeIndex == Edge.TargetNodeIndex)
-	{
-		// 自环：从端口向右出去，绕过节点底部，从左侧回到自己的标题行
-		const FVector2D TopLeft = GetNodeTopLeft(Layout.Nodes[Edge.SourceNodeIndex]);
-		const double Bottom = TopLeft.Y + GetNodeHeight(Edge.SourceNodeIndex) + LoopMargin * 0.5f;
-		const double Right = Start.X + LoopMargin;
-		const double Left = TopLeft.X - LoopMargin;
-		return {
-			ToFloatPoint(Start), ToFloatPoint(FVector2D(Right, Start.Y)), ToFloatPoint(FVector2D(Right, Bottom)),
-			ToFloatPoint(FVector2D(Left, Bottom)), ToFloatPoint(FVector2D(Left, End.Y)), ToFloatPoint(End)
-		};
-	}
-
-	if (Edge.ReturnLane != INDEX_NONE)
-	{
-		// 回边：在源列右侧的空隙里下到底部通道，向左走到目标列左侧的空隙，再上来接到标题行。
-		// 竖直段按通道号错开几个像素，同一空隙里的多条回边不会完全重合。
-		const double Offset = (Edge.ReturnLane % 4) * 3.0;
-		const double LaneY = GetReturnLaneY(Edge.ReturnLane);
-		const double OutX = Start.X + ReturnStub + Offset;
-		const double InX = End.X - ReturnStub - Offset;
-		return {
-			ToFloatPoint(Start), ToFloatPoint(FVector2D(OutX, Start.Y)), ToFloatPoint(FVector2D(OutX, LaneY)),
-			ToFloatPoint(FVector2D(InX, LaneY)), ToFloatPoint(FVector2D(InX, End.Y)), ToFloatPoint(End)
-		};
-	}
-
-	// 普通边：蓝图式 S 形曲线，两端切线都朝右；布局保证目标在右侧的列
-	const double Bend = FMath::Max(60.0, FMath::Abs(End.X - Start.X) * 0.5);
-	return SampleSplinePath(Start, End, Bend);
+	return Layout.Nodes.IsEmpty() ? FVector2D(2.0 * Params.Padding, 2.0 * Params.Padding) : Layout.Size;
 }
 
 TOptional<FBox2D> SCadenceArcGraphCanvas::GetNodeBounds(const int32 NodeIndex) const
@@ -251,30 +194,8 @@ TOptional<FBox2D> SCadenceArcGraphCanvas::GetNodeBounds(const int32 NodeIndex) c
 	{
 		return {};
 	}
-	const FVector2D TopLeft = GetNodeTopLeft(Layout.Nodes[NodeIndex]);
-	return FBox2D(TopLeft, TopLeft + FVector2D(NodeWidth, GetNodeHeight(NodeIndex)));
-}
-
-FVector2D SCadenceArcGraphCanvas::GetNodeTopLeft(const FCadenceArcLayoutNode& Node) const
-{
-	return FVector2D(Padding + Node.Column * ColumnSpacing, Padding + Node.Row * RowSpacing);
-}
-
-float SCadenceArcGraphCanvas::GetNodeHeight(const int32 NodeIndex) const
-{
-	const int32 Ports = PortCounts.IsValidIndex(NodeIndex) ? PortCounts[NodeIndex] : 0;
-	return Ports > 0 ? HeaderHeight + Ports * PortHeight + NodeBottomPad : HeaderHeight;
-}
-
-FVector2D SCadenceArcGraphCanvas::GetPortAnchor(const FCadenceArcLayoutEdge& Edge) const
-{
-	return GetNodeTopLeft(Layout.Nodes[Edge.SourceNodeIndex])
-		+ FVector2D(NodeWidth, HeaderHeight + (Edge.TransitionIndex + 0.5f) * PortHeight);
-}
-
-FVector2D SCadenceArcGraphCanvas::GetInputAnchor(const int32 NodeIndex) const
-{
-	return GetNodeTopLeft(Layout.Nodes[NodeIndex]) + FVector2D(0.f, HeaderHeight * 0.5f);
+	const FCadenceArcLayoutNode& Node = Layout.Nodes[NodeIndex];
+	return FBox2D(Node.Position, Node.Position + Node.Size);
 }
 
 int32 SCadenceArcGraphCanvas::OnPaint(
@@ -310,23 +231,26 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 			|| EdgeIndex == DebugView.CandidateEdgeIndex || bPreparatory;
 	};
 
-	// 连线：从端口行右侧引出
+	// 连线：路径由布局给出，第一个点是端口，最后一个点是接入点
 	for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
 	{
 		const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
+		if (Edge.Path.Num() < 2)
+		{
+			continue;
+		}
 		const bool bCandidateEdge = EdgeIndex == DebugView.CandidateEdgeIndex;
 		const bool bPreparatoryEdge = !bCandidateEdge &&
 			DebugView.PreparatoryEdgeProgress.IsValidIndex(EdgeIndex) &&
 			DebugView.PreparatoryEdgeProgress[EdgeIndex] >= 0.f;
 		const bool bCurrentRelease = EdgeIndex == DebugView.CurrentReleaseEdgeIndex;
-		TArray<FVector2f> Path = BuildEdgePath(Edge);
 
 		if (Edge.IsBrokenTarget())
 		{
 			// 目标不存在：短线末端加问号
 			DrawLabel(
 				OutDrawElements, TextLayer, AllottedGeometry,
-				FVector2D(Path.Last().X + 3.f, Path.Last().Y - 8.f),
+				FVector2D(Edge.Path.Last().X + 3.f, Edge.Path.Last().Y - 8.f),
 				FVector2D(16.f, 16.f), TEXT("?"), HeaderFont, BrokenColor
 			);
 		}
@@ -334,9 +258,14 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 		if (bPreparatoryEdge)
 		{
 			DrawPreparatoryPath(
-				OutDrawElements, EdgeLayer, CanvasGeometry, MoveTemp(Path),
+				OutDrawElements, EdgeLayer, CanvasGeometry, ToFloatPath(Edge.Path),
 				DebugView.PreparatoryEdgeProgress[EdgeIndex], bCurrentRelease,
 				Palette.PreparatoryEdge, Palette.PreparatoryProgress);
+			if (!Edge.IsBrokenTarget())
+			{
+				DrawArrowHead(OutDrawElements, EdgeLayer, CanvasGeometry, Edge.Path, Palette.PreparatoryEdge,
+				              bCurrentRelease ? 2.5f : 1.5f);
+			}
 			continue;
 		}
 
@@ -352,50 +281,53 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 		{
 			// 回边用虚线，一眼能看出是"往回跳"
 			FSlateDrawElement::MakeDashedLines(
-				OutDrawElements, EdgeLayer, CanvasGeometry, MoveTemp(Path),
+				OutDrawElements, EdgeLayer, CanvasGeometry, ToFloatPath(Edge.Path),
 				ESlateDrawEffect::None, Color, EdgeThickness, 8.f);
 		}
 		else
 		{
 			FSlateDrawElement::MakeLines(
-				OutDrawElements, EdgeLayer, CanvasGeometry, MoveTemp(Path),
+				OutDrawElements, EdgeLayer, CanvasGeometry, ToFloatPath(Edge.Path),
 				ESlateDrawEffect::None, Color, true, EdgeThickness);
+		}
+		if (!Edge.IsBrokenTarget())
+		{
+			DrawArrowHead(OutDrawElements, EdgeLayer, CanvasGeometry, Edge.Path, Color, EdgeThickness);
 		}
 	}
 
-	// 节点：主体、标题行、端口行
+	// 节点：主体、标题行
 	for (int32 NodeIndex = 0; NodeIndex < Layout.Nodes.Num(); ++NodeIndex)
 	{
 		const FCadenceArcLayoutNode& Node = Layout.Nodes[NodeIndex];
-		const FVector2D TopLeft = GetNodeTopLeft(Node);
-		const float Height = GetNodeHeight(NodeIndex);
+		const FVector2D TopLeft = Node.Position;
+		const FVector2D Size = Node.Size;
 
 		FSlateDrawElement::MakeBox(
 			OutDrawElements, BodyLayer,
-			AllottedGeometry.ToPaintGeometry(FVector2D(NodeWidth, Height), FSlateLayoutTransform(TopLeft)
-			),
+			AllottedGeometry.ToPaintGeometry(Size, FSlateLayoutTransform(TopLeft)),
 			WhiteBrush, ESlateDrawEffect::None,
 			Node.bReachable ? BodyColor : UnreachableBodyColor); // 不可达节点调暗
 		FSlateDrawElement::MakeBox(
 			OutDrawElements, HeaderLayer,
 			AllottedGeometry.ToPaintGeometry(
-				FVector2D(NodeWidth, HeaderHeight), FSlateLayoutTransform(TopLeft)
+				FVector2D(Size.X, Params.HeaderHeight), FSlateLayoutTransform(TopLeft)
 			),
 			WhiteBrush, ESlateDrawEffect::None,
 			NodeIndex == DebugView.CommittedNodeIndex
 				? Palette.CommittedNodeFill
 				: (Node.bReachable ? HeaderColor : UnreachableHeaderColor));
 		DrawLabel(OutDrawElements, TextLayer, AllottedGeometry, TopLeft + FVector2D(8.f, 4.f),
-		          FVector2D(NodeWidth - 16.f, HeaderHeight),
+		          FVector2D(Size.X - 16.f, Params.HeaderHeight),
 		          ShortTagName(Node.ActionTag), HeaderFont,
 		          FLinearColor::White);
 
+		constexpr float OutlineMargin = 3.f;
+		const FVector2D Min = TopLeft - FVector2D(OutlineMargin, OutlineMargin);
+		const FVector2D Max = TopLeft + Size + FVector2D(OutlineMargin, OutlineMargin);
 		if (NodeIndex == DebugView.CurrentReleaseTargetNodeIndex &&
 			NodeIndex != DebugView.CandidateTargetNodeIndex)
 		{
-			constexpr float OutlineMargin = 3.f;
-			const FVector2D Min = TopLeft - FVector2D(OutlineMargin, OutlineMargin);
-			const FVector2D Max = TopLeft + FVector2D(NodeWidth + OutlineMargin, Height + OutlineMargin);
 			FSlateDrawElement::MakeDashedLines(
 				OutDrawElements, OutlineLayer, CanvasGeometry,
 				TArray<FVector2f>{
@@ -408,12 +340,6 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 		// 绘制候选目标节点的高亮描边
 		if (NodeIndex == DebugView.CandidateTargetNodeIndex)
 		{
-			constexpr float OutlineMargin = 3.f;
-
-			const FVector2D Min = TopLeft - FVector2D(OutlineMargin, OutlineMargin);
-			const FVector2D Max = TopLeft
-				+ FVector2D(NodeWidth + OutlineMargin, Height + OutlineMargin);
-
 			FSlateDrawElement::MakeLines(
 				OutDrawElements,
 				OutlineLayer,
@@ -431,7 +357,7 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 		}
 	}
 
-	// 端口行：条件文字与连线同色，右侧一个小圆点作为引出点
+	// 端口行：条件文字与连线同色，右侧一个小圆点作为引出点（即路径的第一个点）
 	for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
 	{
 		const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
@@ -444,24 +370,27 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 		{
 			DisplayColor.A = 0.5f; // 文字比连线淡得少一些，仍然要能读
 		}
-		const FVector2D TopLeft = GetNodeTopLeft(Layout.Nodes[Edge.SourceNodeIndex]);
-		const FVector2D RowTopLeft = TopLeft + FVector2D(10.f, HeaderHeight + Edge.TransitionIndex * PortHeight + 1.f);
+		const FCadenceArcLayoutNode& Source = Layout.Nodes[Edge.SourceNodeIndex];
+		const FVector2D RowTopLeft = Source.Position
+			+ FVector2D(10.f, Params.HeaderHeight + Edge.TransitionIndex * Params.PortHeight + 1.f);
 		DrawLabel(
 			OutDrawElements, TextLayer, AllottedGeometry, RowTopLeft,
-			FVector2D(NodeWidth - 24.f, PortHeight),
+			FVector2D(Source.Size.X - 24.f, Params.PortHeight),
 			EdgeLabels[EdgeIndex], PortFont,
 			DisplayColor
 		);
 
-		const FVector2D Anchor = GetPortAnchor(Edge);
-		FSlateDrawElement::MakeBox(
-			OutDrawElements, HeaderLayer,
-			AllottedGeometry.ToPaintGeometry(
-				FVector2D(6.f, 6.f),
-				FSlateLayoutTransform(Anchor - FVector2D(3.f, 3.f))
-			),
-			WhiteBrush, ESlateDrawEffect::None,
-			DisplayColor);
+		if (!Edge.Path.IsEmpty())
+		{
+			FSlateDrawElement::MakeBox(
+				OutDrawElements, HeaderLayer,
+				AllottedGeometry.ToPaintGeometry(
+					FVector2D(6.f, 6.f),
+					FSlateLayoutTransform(Edge.Path[0] - FVector2D(3.f, 3.f))
+				),
+				WhiteBrush, ESlateDrawEffect::None,
+				DisplayColor);
+		}
 	}
 	return TextLayer;
 }

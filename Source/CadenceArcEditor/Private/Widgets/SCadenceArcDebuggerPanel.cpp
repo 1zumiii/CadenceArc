@@ -336,38 +336,42 @@ void SCadenceArcDebuggerPanel::FollowCommittedNode()
 		return;
 	}
 	--PendingFollowFrames;
-	const TOptional<FBox2D> Bounds = Canvas->GetNodeBounds(NodeIndex);
-	if (!Bounds.IsSet())
+	const TOptional<FBox2D> Primary = Canvas->GetNodeBounds(NodeIndex);
+	if (!Primary.IsSet())
 	{
 		return;
 	}
+	// 整组 = 已提交节点 + 它的直接后继（下一步能去的地方）；自环和坏目标不扩大范围
+	FBox2D Group = Primary.GetValue();
+	for (const FCadenceArcLayoutEdge& Edge : Canvas->GetLayout().Edges)
+	{
+		if (Edge.SourceNodeIndex == NodeIndex && !Edge.IsBrokenTarget() && Edge.TargetNodeIndex != NodeIndex)
+		{
+			if (const TOptional<FBox2D> Successor = Canvas->GetNodeBounds(Edge.TargetNodeIndex))
+			{
+				Group += Successor.GetValue();
+			}
+		}
+	}
 
-	// 节点已完整可见就不动；否则只滚到刚好露出节点并留一点边距，不强制居中，减少画面跳动
-	const auto ScrollAxis = [](SScrollBox& Scroll, const double Min, const double Max, const double Visible)
+	// 滚动规则见 ComputeFollowOffset：整组放得下就最小移动显示整组，放不下时保证已提交节点可见
+	const auto ScrollAxis = [](SScrollBox& Scroll, const double Visible,
+	                           const double PrimaryMin, const double PrimaryMax,
+	                           const double GroupMin, const double GroupMax)
 	{
 		constexpr double Margin = 40.0;
-		if (Visible <= 0.0)
-		{
-			return; // 还没完成第一次排布，等下一帧
-		}
 		const double Offset = Scroll.GetScrollOffset();
-		double NewOffset = Offset;
-		if (Min - Margin < Offset || Max - Min + 2.0 * Margin > Visible)
-		{
-			NewOffset = Min - Margin;
-		}
-		else if (Max + Margin > Offset + Visible)
-		{
-			NewOffset = Max + Margin - Visible;
-		}
-		NewOffset = FMath::Clamp(NewOffset, 0.0, static_cast<double>(Scroll.GetScrollOffsetOfEnd()));
+		const double NewOffset = ComputeFollowOffset(
+			Offset, Visible, PrimaryMin, PrimaryMax, GroupMin, GroupMax, Margin, Scroll.GetScrollOffsetOfEnd());
 		if (NewOffset != Offset)
 		{
 			Scroll.SetScrollOffset(static_cast<float>(NewOffset));
 		}
 	};
-	ScrollAxis(*HorizontalScroll, Bounds->Min.X, Bounds->Max.X, HorizontalScroll->GetCachedGeometry().GetLocalSize().X);
-	ScrollAxis(*VerticalScroll, Bounds->Min.Y, Bounds->Max.Y, VerticalScroll->GetCachedGeometry().GetLocalSize().Y);
+	ScrollAxis(*HorizontalScroll, HorizontalScroll->GetCachedGeometry().GetLocalSize().X,
+	           Primary->Min.X, Primary->Max.X, Group.Min.X, Group.Max.X);
+	ScrollAxis(*VerticalScroll, VerticalScroll->GetCachedGeometry().GetLocalSize().Y,
+	           Primary->Min.Y, Primary->Max.Y, Group.Min.Y, Group.Max.Y);
 }
 
 FText SCadenceArcDebuggerPanel::GetStateText() const

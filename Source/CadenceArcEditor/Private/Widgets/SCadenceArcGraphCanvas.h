@@ -54,26 +54,15 @@ private:
 		FLinearColor PreparatoryProgress = FLinearColor(1.0f, 0.62f, 0.12f);
 	};
 
-	FVector2D GetNodeTopLeft(const FCadenceArcLayoutNode& Node) const;
-	float GetNodeHeight(int32 NodeIndex) const;
-	// 出边在源节点右侧的引出点：第 TransitionIndex 个端口行的垂直中点
-	FVector2D GetPortAnchor(const FCadenceArcLayoutEdge& Edge) const;
-	// 入边的接入点：目标节点标题行左侧中点
-	FVector2D GetInputAnchor(int32 NodeIndex) const;
-	// 第 Lane 条底部通道的纵坐标：在所有节点和自环下方，从上往下排
-	double GetReturnLaneY(int32 Lane) const;
-	// 边在画布上的完整路径（折线点）：普通边为采样后的 S 曲线，自环、回边和坏目标为折线
-	TArray<FVector2f> BuildEdgePath(const FCadenceArcLayoutEdge& Edge) const;
-
 	// Slate 控件不参与 GC，引用 UObject 必须用弱引用
 	TWeakObjectPtr<const UCadenceArcGraph> Graph;
 	FCadenceArcGraphLayout Layout;
 	FCadenceArcDebugView DebugView;
 
+	// 布局和绘制共用同一份几何参数；节点位置、尺寸和连线路径都由布局给出，画布不再自己算。
+	FCadenceArcLayoutParams Params;
+
 	// 以下都在 SetGraph 里一次算好，OnPaint 只读这些，不再按下标访问活资产：
 	// 面板开着时资产被删改，也不会拿旧下标越界。
-	TArray<int32> PortCounts; // 每个节点的出边数，与 Layout.Nodes 同序
 	TArray<FString> EdgeLabels; // 每条边的条件文字，与 Layout.Edges 同序
-	float MaxNodeHeight = 0.f;
-	float RowSpacing = 0.f; // 取全图最高节点，保证同一列上下不重叠
 };
