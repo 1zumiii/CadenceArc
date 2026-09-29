@@ -2,8 +2,10 @@
 //
 // 被测契约（Phase 7 / 7A 第 5 步）：
 // - Layout.Nodes 与 Graph->Nodes 一一对应、同序；NodeIndex 等于数组索引。
-// - 列号是从入口出发的最短距离（BFS），行号是同一列内被发现的先后，按上一列顺序、Transitions 顺序展开。
-// - 环、回边、自环、平行边不改变已确定的列号，也不会死循环。
+// - 从入口深度优先遍历（按节点、Transition 数组顺序），指向当前递归路径上节点的边是回边（含自环）。
+// - 列号是去掉回边后从入口出发的最长路径：非回边一律指向严格更右的列；环不会死循环。
+// - 行号初始按深度优先前序，再按相邻节点平均行号（重心）上下交替扫描 4 遍；平局按当前位置，结果确定。
+// - 目标列不在源列右侧的非自环边分配底部通道：跨度小的在上，跨度相同按边序号。
 // - 不可达节点放在"最深可达列 + 1"，行号按数组顺序；入口缺失时所有节点不可达，放在第 0 列。
 // - 每条 Transition 生成一条边，按节点顺序、Transition 顺序排列；目标不存在时标记为坏目标。
 // - 边携带 Transition 的 InputTag，平行边可据此区分。
@@ -33,6 +35,7 @@ namespace CadenceArc::Editor::Tests
 	static FGameplayTag Layout_D() { return LayoutTag(TEXT("CadenceArc.Automation.Action.Heavy01")); }
 	static FGameplayTag Layout_E() { return LayoutTag(TEXT("CadenceArc.Automation.Action.Heavy02")); }
 	static FGameplayTag Layout_F() { return LayoutTag(TEXT("CadenceArc.Automation.Action.Finisher01")); }
+	static FGameplayTag Layout_G() { return LayoutTag(TEXT("CadenceArc.Automation.Action.Finisher02")); }
 	// 有效但不作为任何节点出现的 Tag，用来制造坏目标和缺失入口
 	static FGameplayTag Layout_Missing() { return LayoutTag(TEXT("CadenceArc.Automation.Action.Finisher03")); }
 	static FGameplayTag Layout_InputLight() { return LayoutTag(TEXT("CadenceArc.Automation.Input.Light")); }
@@ -104,6 +107,50 @@ namespace CadenceArc::Editor::Tests
 		return bPassed;
 	}
 
+	static bool ExpectRouting(
+		FAutomationTestBase& Test, const FCadenceArcGraphLayout& Layout, const int32 EdgeIndex,
+		const bool bExpectBackEdge, const int32 ExpectedLane)
+	{
+		if (!Layout.Edges.IsValidIndex(EdgeIndex))
+		{
+			return Test.TestTrue(*FString::Printf(TEXT("Edge %d exists"), EdgeIndex), false);
+		}
+		const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
+		bool bPassed = Test.TestTrue(*FString::Printf(TEXT("Edge %d back edge flag"), EdgeIndex),
+		                             Edge.bIsBackEdge == bExpectBackEdge);
+		bPassed &= Test.TestEqual(*FString::Printf(TEXT("Edge %d return lane"), EdgeIndex),
+		                          Edge.ReturnLane, ExpectedLane);
+		return bPassed;
+	}
+
+	// 对任意布局都应成立的几何性质：画布据此决定走线，不成立就会出现穿过节点的连线
+	static void ExpectLayoutInvariants(FAutomationTestBase& Test, const FCadenceArcGraphLayout& Layout)
+	{
+		TSet<TPair<int32, int32>> Cells;
+		for (const FCadenceArcLayoutNode& Node : Layout.Nodes)
+		{
+			Test.TestFalse(*FString::Printf(TEXT("Node %d has a unique cell"), Node.NodeIndex),
+			               Cells.Contains(TPair<int32, int32>(Node.Column, Node.Row)));
+			Cells.Add(TPair<int32, int32>(Node.Column, Node.Row));
+		}
+		int32 NumLanes = 0;
+		for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
+		{
+			const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
+			if (Edge.IsBrokenTarget() || Edge.SourceNodeIndex == Edge.TargetNodeIndex)
+			{
+				Test.TestEqual(*FString::Printf(TEXT("Edge %d needs no lane"), EdgeIndex), Edge.ReturnLane, INDEX_NONE);
+				continue;
+			}
+			const bool bPointsRight =
+				Layout.Nodes[Edge.TargetNodeIndex].Column > Layout.Nodes[Edge.SourceNodeIndex].Column;
+			Test.TestTrue(*FString::Printf(TEXT("Edge %d has a lane exactly when it does not point right"), EdgeIndex),
+			              bPointsRight == (Edge.ReturnLane == INDEX_NONE));
+			NumLanes += Edge.ReturnLane != INDEX_NONE ? 1 : 0;
+		}
+		Test.TestEqual(TEXT("Lane count matches"), Layout.NumReturnLanes, NumLanes);
+	}
+
 	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 		FCadenceArcLayoutNodesAlignTest,
 		"CadenceArc.Editor.Layout.NodesAlignWithGraph",
@@ -159,12 +206,12 @@ namespace CadenceArc::Editor::Tests
 
 	bool FCadenceArcLayoutBranchRowsTest::RunTest(const FString& Parameters)
 	{
-		// 数组顺序故意与发现顺序不同：行号必须跟随 Transitions 顺序，而不是 Nodes 数组顺序
+		// 数组顺序故意与发现顺序不同：行号跟随遍历和重心，而不是 Nodes 数组顺序
 		//        A
 		//      / | \
-		//     D  B  C      第 1 列按 A 的 Transitions 顺序：D、B、C
+		//     D  B  C      第 1 列按深度优先前序：D、B、C（三者的前驱都是 A，重心相同，保持原位）
 		//        |  |
-		//        F  E      第 2 列按上一列顺序展开：先 B 的 F，再 C 的 E
+		//        F  E      第 2 列按前驱的行号：F 跟着 B（第 1 行），E 跟着 C（第 2 行）
 		UCadenceArcGraph* Graph = MakeLayoutGraph(
 			Layout_A(), {Layout_A(), Layout_B(), Layout_C(), Layout_D(), Layout_E(), Layout_F()});
 		AddLayoutEdge(Graph, 0, Layout_D());
@@ -184,14 +231,14 @@ namespace CadenceArc::Editor::Tests
 	}
 
 	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-		FCadenceArcLayoutShortestDistanceTest,
-		"CadenceArc.Editor.Layout.ColumnIsShortestDistance",
+		FCadenceArcLayoutLongestPathTest,
+		"CadenceArc.Editor.Layout.ColumnIsLongestForwardPath",
 		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-	bool FCadenceArcLayoutShortestDistanceTest::RunTest(const FString& Parameters)
+	bool FCadenceArcLayoutLongestPathTest::RunTest(const FString& Parameters)
 	{
-		// A 先连 B、B 再连 C，A 的第二条边直接连 C。
-		// 按深度优先会先经 B 走到 C，把 C 放在第 2 列；最短距离是 1。
+		// A -> B -> C，另有捷径 A -> C。按最短距离 C 会和 B 同在第 1 列，B -> C 就成了同列的边；
+		// 按最长路径 C 排在 B 右边，两条边都指向右侧，不需要回边通道。
 		UCadenceArcGraph* Graph = MakeLayoutGraph(Layout_A(), {Layout_A(), Layout_B(), Layout_C()});
 		AddLayoutEdge(Graph, 0, Layout_B());
 		AddLayoutEdge(Graph, 1, Layout_C());
@@ -199,8 +246,10 @@ namespace CadenceArc::Editor::Tests
 		const FCadenceArcGraphLayout Layout = BuildGraphLayout(*Graph);
 
 		ExpectCell(*this, Layout, 1, 1, 0, true);
-		ExpectCell(*this, Layout, 2, 1, 1, true);
-		ExpectExtent(*this, TEXT("Shortcut"), Layout, 2, 2);
+		ExpectCell(*this, Layout, 2, 2, 0, true);
+		ExpectExtent(*this, TEXT("Shortcut"), Layout, 3, 1);
+		TestEqual(TEXT("Shortcut needs no return lane"), Layout.NumReturnLanes, 0);
+		ExpectLayoutInvariants(*this, Layout);
 		return !HasAnyErrors();
 	}
 
@@ -228,7 +277,14 @@ namespace CadenceArc::Editor::Tests
 			ExpectEdge(*this, Layout, 1, 0, 1, 1); // A -> B
 			ExpectEdge(*this, Layout, 2, 1, 0, 0); // B -> A
 			ExpectEdge(*this, Layout, 3, 1, 1, 1); // B -> B
+			// 两个自环和 B -> A 都闭合环；只有 B -> A 需要底部通道，自环由画布单独绕
+			ExpectRouting(*this, Layout, 0, true, INDEX_NONE);
+			ExpectRouting(*this, Layout, 1, false, INDEX_NONE);
+			ExpectRouting(*this, Layout, 2, true, 0);
+			ExpectRouting(*this, Layout, 3, true, INDEX_NONE);
 		}
+		TestEqual(TEXT("Cycles use one return lane"), Layout.NumReturnLanes, 1);
+		ExpectLayoutInvariants(*this, Layout);
 		return !HasAnyErrors();
 	}
 
@@ -254,7 +310,10 @@ namespace CadenceArc::Editor::Tests
 		{
 			ExpectEdge(*this, Layout, 0, 1, 0, 3); // A -> B
 			ExpectEdge(*this, Layout, 1, 2, 0, 1); // D -> A
+			// D 不在遍历路径上，所以 D -> A 不是回边；但它指向左侧，仍然走底部通道
+			ExpectRouting(*this, Layout, 1, false, 0);
 		}
+		ExpectLayoutInvariants(*this, Layout);
 		return !HasAnyErrors();
 	}
 
@@ -326,7 +385,10 @@ namespace CadenceArc::Editor::Tests
 		if (TestEqual(TEXT("Edges survive a missing entry"), Layout.Edges.Num(), 1))
 		{
 			ExpectEdge(*this, Layout, 0, 0, 0, 1);
+			// 没有入口就没有遍历：A -> B 两端同在第 0 列，走底部通道
+			ExpectRouting(*this, Layout, 0, false, 0);
 		}
+		ExpectLayoutInvariants(*this, Layout);
 		return !HasAnyErrors();
 	}
 
@@ -404,8 +466,132 @@ namespace CadenceArc::Editor::Tests
 			{
 				TestEqual(*FString::Printf(TEXT("Edge %d target stable"), Index),
 				          Second.Edges[Index].TargetNodeIndex, First.Edges[Index].TargetNodeIndex);
+				TestEqual(*FString::Printf(TEXT("Edge %d lane stable"), Index),
+				          Second.Edges[Index].ReturnLane, First.Edges[Index].ReturnLane);
+				TestTrue(*FString::Printf(TEXT("Edge %d back flag stable"), Index),
+				         Second.Edges[Index].bIsBackEdge == First.Edges[Index].bIsBackEdge);
 			}
 		}
+		TestEqual(TEXT("Same lane count"), Second.NumReturnLanes, First.NumReturnLanes);
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcLayoutBarycenterTest,
+		"CadenceArc.Editor.Layout.RowsFollowBarycenter",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcLayoutBarycenterTest::RunTest(const FString& Parameters)
+	{
+		// A 分出 B、C、D、E；B 和 E 都连 X，C 连 Y。按前序 X 先被发现，初始排成 X 在上、Y 在下，
+		// E -> X 与 C -> Y 交叉。重心扫描后：
+		//   第 1 列 C、B、E、D（C 跟随 Y 上移；D 没有后继，保持当前位置排到最后）
+		//   第 2 列 Y、X
+		// 结果没有交叉。
+		UCadenceArcGraph* Graph = MakeLayoutGraph(
+			Layout_A(), {Layout_A(), Layout_B(), Layout_C(), Layout_D(), Layout_E(), Layout_F(), Layout_G()});
+		constexpr int32 A = 0, B = 1, C = 2, D = 3, E = 4, X = 5, Y = 6;
+		AddLayoutEdge(Graph, A, Layout_B());
+		AddLayoutEdge(Graph, A, Layout_C());
+		AddLayoutEdge(Graph, A, Layout_D());
+		AddLayoutEdge(Graph, A, Layout_E());
+		AddLayoutEdge(Graph, B, Layout_F()); // B -> X
+		AddLayoutEdge(Graph, C, Layout_G()); // C -> Y
+		AddLayoutEdge(Graph, E, Layout_F()); // E -> X
+		const FCadenceArcGraphLayout Layout = BuildGraphLayout(*Graph);
+
+		ExpectCell(*this, Layout, C, 1, 0, true);
+		ExpectCell(*this, Layout, B, 1, 1, true);
+		ExpectCell(*this, Layout, E, 1, 2, true);
+		ExpectCell(*this, Layout, D, 1, 3, true);
+		ExpectCell(*this, Layout, Y, 2, 0, true);
+		ExpectCell(*this, Layout, X, 2, 1, true);
+		ExpectExtent(*this, TEXT("Barycenter"), Layout, 3, 4);
+		ExpectLayoutInvariants(*this, Layout);
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcLayoutReturnLaneOrderTest,
+		"CadenceArc.Editor.Layout.ReturnLanesOrderedBySpan",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcLayoutReturnLaneOrderTest::RunTest(const FString& Parameters)
+	{
+		// 链 A -> B -> C -> D，回边 D -> A（跨 3 列）和 C -> B（跨 1 列）。
+		// 节点数组把 D 放在 B、C 前面，D -> A 的边序号更小；但它跨度大，仍放在下面的通道，
+		// 短回边贴近节点，两条回边不交叉。
+		UCadenceArcGraph* Graph = MakeLayoutGraph(Layout_A(), {Layout_A(), Layout_D(), Layout_B(), Layout_C()});
+		constexpr int32 A = 0, D = 1, B = 2, C = 3;
+		AddLayoutEdge(Graph, A, Layout_B());                        // e0 A -> B
+		AddLayoutEdge(Graph, D, Layout_A());                        // e1 D -> A
+		AddLayoutEdge(Graph, B, Layout_C());                        // e2 B -> C
+		AddLayoutEdge(Graph, C, Layout_D());                        // e3 C -> D
+		AddLayoutEdge(Graph, C, Layout_B(), Layout_InputHeavy());   // e4 C -> B
+		const FCadenceArcGraphLayout Layout = BuildGraphLayout(*Graph);
+
+		ExpectCell(*this, Layout, A, 0, 0, true);
+		ExpectCell(*this, Layout, B, 1, 0, true);
+		ExpectCell(*this, Layout, C, 2, 0, true);
+		ExpectCell(*this, Layout, D, 3, 0, true);
+		ExpectRouting(*this, Layout, 3, false, INDEX_NONE);
+		ExpectRouting(*this, Layout, 4, true, 0);
+		ExpectRouting(*this, Layout, 1, true, 1);
+		TestEqual(TEXT("Two return lanes"), Layout.NumReturnLanes, 2);
+		ExpectLayoutInvariants(*this, Layout);
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcLayoutComboShapeTest,
+		"CadenceArc.Editor.Layout.ComboShapeFlowsRight",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcLayoutComboShapeTest::RunTest(const FString& Parameters)
+	{
+		// 仿照 Sandbox 的复杂连招图：交叉引用、互相连成环、自环、平行边、多个终点。
+		// 深度优先：A B E G | E->C C->B(回) C->F F->E(回) F->H | A->D D->D(自环)
+		// 最长路径：A0 | B1 D1 | E2 | C3 G3 | F4 | H5
+		UCadenceArcGraph* Graph = MakeLayoutGraph(
+			Layout_A(), {Layout_A(), Layout_B(), Layout_C(), Layout_D(), Layout_E(), Layout_F(), Layout_G(), Layout_Missing()});
+		constexpr int32 A = 0, B = 1, C = 2, D = 3, E = 4, F = 5, G = 6, H = 7;
+		AddLayoutEdge(Graph, A, Layout_B());                        // e0
+		AddLayoutEdge(Graph, A, Layout_C(), Layout_InputHeavy());   // e1
+		AddLayoutEdge(Graph, A, Layout_D(), Layout_InputHeavy());   // e2
+		AddLayoutEdge(Graph, B, Layout_E());                        // e3
+		AddLayoutEdge(Graph, B, Layout_C(), Layout_InputHeavy());   // e4
+		AddLayoutEdge(Graph, B, Layout_G(), Layout_InputHeavy());   // e5
+		AddLayoutEdge(Graph, C, Layout_B());                        // e6 回边
+		AddLayoutEdge(Graph, C, Layout_F(), Layout_InputHeavy());   // e7
+		AddLayoutEdge(Graph, D, Layout_F());                        // e8
+		AddLayoutEdge(Graph, D, Layout_D(), Layout_InputHeavy());   // e9 自环
+		AddLayoutEdge(Graph, D, Layout_Missing(), Layout_InputHeavy()); // e10 D -> H
+		AddLayoutEdge(Graph, E, Layout_G());                        // e11
+		AddLayoutEdge(Graph, E, Layout_G(), Layout_InputHeavy());   // e12 平行边
+		AddLayoutEdge(Graph, E, Layout_C(), Layout_InputHeavy());   // e13
+		AddLayoutEdge(Graph, F, Layout_E());                        // e14 回边
+		AddLayoutEdge(Graph, F, Layout_Missing(), Layout_InputHeavy()); // e15 F -> H
+		const FCadenceArcGraphLayout Layout = BuildGraphLayout(*Graph);
+
+		const int32 ExpectedColumns[] = {0, 1, 3, 1, 2, 4, 3, 5};
+		for (int32 Index = 0; Index < 8; ++Index)
+		{
+			TestEqual(*FString::Printf(TEXT("Node %d column"), Index), Layout.Nodes[Index].Column, ExpectedColumns[Index]);
+			TestTrue(*FString::Printf(TEXT("Node %d reachable"), Index), Layout.Nodes[Index].bReachable);
+		}
+		for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
+		{
+			const bool bExpectBack = EdgeIndex == 6 || EdgeIndex == 9 || EdgeIndex == 14;
+			TestTrue(*FString::Printf(TEXT("Edge %d back edge flag"), EdgeIndex),
+			         Layout.Edges[EdgeIndex].bIsBackEdge == bExpectBack);
+		}
+		// 两条回边跨度都是 2，按边序号分配通道
+		ExpectRouting(*this, Layout, 6, true, 0);
+		ExpectRouting(*this, Layout, 14, true, 1);
+		ExpectRouting(*this, Layout, 9, true, INDEX_NONE);
+		TestEqual(TEXT("Two return lanes"), Layout.NumReturnLanes, 2);
+		ExpectExtent(*this, TEXT("Combo shape"), Layout, 6, 2);
+		ExpectLayoutInvariants(*this, Layout);
 		return !HasAnyErrors();
 	}
 }

@@ -48,6 +48,28 @@ namespace
 		}
 		return MatchingEdgeIndex;
 	}
+
+	float GetPreparatoryProgress(const FCadenceArcTransition& Transition,
+		const FCadenceArcHoldSnapshot& Hold, const double Held)
+	{
+		// 每条 Released 边只填自己的 [Min, Max)；最高档的可视终点取快照中的自动释放时间。
+		const double Min = Transition.bUseDurationRange
+			? Transition.DurationRange.MinHeldDurationSeconds : 0.0;
+		const bool bHasMax = Transition.bUseDurationRange && Transition.DurationRange.bHasMaxHeldDuration;
+		if (!bHasMax && !Hold.bHasChargeConfig)
+		{
+			// 没有自动截止时间时，无上限档位在达到下限的瞬间填满。
+			return Held >= Min ? 1.f : 0.f;
+		}
+		const double Max = bHasMax
+			? Transition.DurationRange.MaxHeldDurationSecondsExclusive
+			: Hold.AutoReleaseTimestampSeconds - Hold.PressedTimestampSeconds;
+		if (Max <= Min)
+		{
+			return Held >= Min ? 1.f : 0.f;
+		}
+		return static_cast<float>(FMath::Clamp((Held - Min) / (Max - Min), 0.0, 1.0));
+	}
 }
 
 FCadenceArcDebugView BuildDebugView(const UCadenceArcResolver& InResolver, const FCadenceArcGraphLayout& InLayout)
@@ -74,5 +96,50 @@ FCadenceArcDebugView BuildDebugView(const UCadenceArcResolver& InResolver, const
 	DebugView.bBufferWindowOpen = InResolver.IsBufferWindowOpen();
 	DebugView.BufferedInputTag = InResolver.GetBufferedInputTag();
 	DebugView.HoldSnapshot = InResolver.GetInputHoldSnapshot();
+	DebugView.PreparatoryEdgeProgress.Init(-1.f, InLayout.Edges.Num());
+	if (DebugView.HoldSnapshot.bHasHold)
+	{
+		const FCadenceArcHoldSnapshot& Hold = DebugView.HoldSnapshot;
+		const int32 SourceIndex = FindNodeIndex(InLayout, Hold.SourceActionTag);
+		const double Held = Hold.LastObservedTimestampSeconds - Hold.PressedTimestampSeconds;
+		FCadenceArcInputEvent ReleaseEvent;
+		ReleaseEvent.InputTag = Hold.InputTag;
+		ReleaseEvent.InputPhase = ECadenceArcInputPhase::Released;
+		ReleaseEvent.TimestampSeconds = Hold.LastObservedTimestampSeconds;
+		ReleaseEvent.HeldDurationSeconds = Held;
+
+		bool bMultipleMatches = false;
+		for (int32 EdgeIndex = 0; EdgeIndex < InLayout.Edges.Num(); ++EdgeIndex)
+		{
+			const FCadenceArcLayoutEdge& Edge = InLayout.Edges[EdgeIndex];
+			if (Edge.SourceNodeIndex != SourceIndex ||
+				Edge.Transition.InputTag != Hold.InputTag ||
+				Edge.Transition.InputPhase != ECadenceArcInputPhase::Released)
+			{
+				continue;
+			}
+			DebugView.PreparatoryEdgeProgress[EdgeIndex] = GetPreparatoryProgress(Edge.Transition, Hold, Held);
+			if (Edge.Transition.Matches(ReleaseEvent))
+			{
+				if (DebugView.CurrentReleaseEdgeIndex != INDEX_NONE)
+				{
+					bMultipleMatches = true;
+				}
+				else
+				{
+					DebugView.CurrentReleaseEdgeIndex = EdgeIndex;
+				}
+			}
+		}
+		if (bMultipleMatches)
+		{
+			DebugView.CurrentReleaseEdgeIndex = INDEX_NONE;
+		}
+		if (DebugView.CurrentReleaseEdgeIndex != INDEX_NONE)
+		{
+			DebugView.CurrentReleaseTargetNodeIndex =
+				InLayout.Edges[DebugView.CurrentReleaseEdgeIndex].TargetNodeIndex;
+		}
+	}
 	return DebugView;
 }

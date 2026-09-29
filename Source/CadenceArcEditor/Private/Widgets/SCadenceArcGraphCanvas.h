@@ -48,6 +48,8 @@ private:
 		FLinearColor CandidateOutline = FLinearColor(1.0f, 0.8f, 0.1f);
 		FLinearColor NormalEdge = FLinearColor(0.55f, 0.55f, 0.55f);
 		FLinearColor CandidateEdge = FLinearColor(1.0f, 0.8f, 0.1f);
+		FLinearColor PreparatoryEdge = FLinearColor(1.0f, 0.42f, 0.06f);
+		FLinearColor PreparatoryProgress = FLinearColor(1.0f, 0.62f, 0.12f);
 	};
 
 	FVector2D GetNodeTopLeft(const FCadenceArcLayoutNode& Node) const;
@@ -56,6 +58,10 @@ private:
 	FVector2D GetPortAnchor(const FCadenceArcLayoutEdge& Edge) const;
 	// 入边的接入点：目标节点标题行左侧中点
 	FVector2D GetInputAnchor(int32 NodeIndex) const;
+	// 第 Lane 条底部通道的纵坐标：在所有节点和自环下方，从上往下排
+	double GetReturnLaneY(int32 Lane) const;
+	// 边在画布上的完整路径（折线点）：普通边为采样后的 S 曲线，自环、回边和坏目标为折线
+	TArray<FVector2f> BuildEdgePath(const FCadenceArcLayoutEdge& Edge) const;
 
 	// Slate 控件不参与 GC，引用 UObject 必须用弱引用
 	TWeakObjectPtr<const UCadenceArcGraph> Graph;
