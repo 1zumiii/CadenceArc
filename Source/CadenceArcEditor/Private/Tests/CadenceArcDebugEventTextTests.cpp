@@ -76,8 +76,17 @@ namespace CadenceArc::Editor::Tests
 			Event.RequestBefore.RequestId = 7;
 			const FCadenceArcDebugEventText Text = FormatDebugEvent(Event);
 			TestEqual(TEXT("Stale summary"), Text.Summary, FString(TEXT("Started #3 ignored")));
+			TestTrue(TEXT("No time recorded shows no time"), Text.Time.IsEmpty());
 			TestEqual(TEXT("Stale detail"), Text.FailureDetail,
 			          FString(TEXT("Stale callback: current request is #7 (RequestIdMismatch)")));
+		}
+		// 借用之前调用的时间：前面加 "~"
+		{
+			FCadenceArcDebugEvent Event = MakeTextEvent(ECadenceArcDebugOperation::OpenWindow);
+			Event.bHasTimestamp = true;
+			Event.bTimeFromLastCall = true;
+			Event.TimestampSeconds = 53.8;
+			TestEqual(TEXT("Borrowed time"), FormatDebugEvent(Event).Time, FString(TEXT("~53.80s")));
 		}
 		// 正常完成、没有缓冲：不是失败，不带说明
 		{

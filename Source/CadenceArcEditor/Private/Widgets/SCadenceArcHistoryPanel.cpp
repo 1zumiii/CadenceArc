@@ -1,5 +1,6 @@
 #include "SCadenceArcHistoryPanel.h"
 
+#include "Engine/World.h"
 #include "Resolver/CadenceArcResolver.h"
 #include "Styling/CoreStyle.h"
 #include "ViewModel/CadenceArcDebuggerSelection.h"
@@ -87,15 +88,17 @@ void SCadenceArcHistoryPanel::Construct(const FArguments& InArgs)
 EActiveTimerReturnType SCadenceArcHistoryPanel::OnRefreshTick(double CurrentTime, float DeltaTime)
 {
 	UCadenceArcResolver* Resolver = CadenceArc::Editor::DebuggerSelection::GetResolver();
-	if (Resolver != ObservedResolver.Get())
-	{
-		// 换了实例或实例已销毁：历史属于实例本身，不能串到新实例上
-		ObservedResolver = Resolver;
-		ResetRows();
-	}
 	if (!Resolver)
 	{
+		// PIE 结束或取消了选择：保留已读到的记录供回看，标题标明已结束
 		return EActiveTimerReturnType::Continue;
+	}
+	if (Resolver != ObservedResolver.Get())
+	{
+		// 选了另一个实例：历史属于实例本身，不能串到新实例上
+		ObservedResolver = Resolver;
+		ObservedLabel = CadenceArc::Editor::DebuggerSelection::GetLabel();
+		ResetRows();
 	}
 
 	const FCadenceArcDebugHistory& History = Resolver->GetDebugHistory();
@@ -114,11 +117,17 @@ EActiveTimerReturnType SCadenceArcHistoryPanel::OnRefreshTick(double CurrentTime
 		                                    static_cast<unsigned long long>(NewEvents[0].Sequence - FirstExpected));
 		AllRows.Insert(Gap, 0);
 	}
+	// 记录里完全没有时间的（例如宿主还没传过任何时间之前的 Initialize），用面板读到它时的 PIE 世界时间补上
+	const UWorld* World = Resolver->GetWorld();
 	for (const FCadenceArcDebugEvent& Event : NewEvents)
 	{
 		const TSharedPtr<FRow> Row = MakeShared<FRow>();
 		Row->Sequence = Event.Sequence;
 		Row->Text = FormatDebugEvent(Event);
+		if (Row->Text.Time.IsEmpty() && World)
+		{
+			Row->Text.Time = FString::Printf(TEXT("~%.2fs"), World->GetTimeSeconds());
+		}
 		AllRows.Insert(Row, 0);
 	}
 	if (AllRows.Num() > MaxRows)
@@ -219,8 +228,11 @@ TSharedRef<ITableRow> SCadenceArcHistoryPanel::MakeRowWidget(
 
 FText SCadenceArcHistoryPanel::GetFollowingText() const
 {
-	const FString Label = CadenceArc::Editor::DebuggerSelection::GetLabel();
-	return FText::FromString(Label.IsEmpty()
-		                         ? TEXT("Select a PIE resolver in Arc Debugger to see its history.")
-		                         : FString::Printf(TEXT("History of %s (newest first)"), *Label));
+	if (ObservedLabel.IsEmpty())
+	{
+		return FText::FromString(TEXT("Select a resolver in Arc Debugger"));
+	}
+	const bool bLive = ObservedResolver.IsValid()
+		&& ObservedResolver.Get() == CadenceArc::Editor::DebuggerSelection::GetResolver();
+	return FText::FromString(FString::Printf(TEXT("History of %s%s"), *ObservedLabel, bLive ? TEXT("") : TEXT(" (ended)")));
 }

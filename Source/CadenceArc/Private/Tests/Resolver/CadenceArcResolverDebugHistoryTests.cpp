@@ -141,6 +141,15 @@ namespace CadenceArc::Tests
 
 		TestTrue(TEXT("Second submit is buffered"), Events[4].Category == ECadenceArcResolutionCategory::Buffered);
 
+		// 不带时间的操作取此前最近一次带时间的调用；在任何带时间的调用之前就没有时间
+		TestFalse(TEXT("Initialize before any host time has no time"), Events[0].bHasTimestamp);
+		TestFalse(TEXT("Submit uses its own time"), Events[1].bTimeFromLastCall);
+		TestTrue(TEXT("Started borrows the submit's time"), Started.bHasTimestamp && Started.bTimeFromLastCall
+		         && Started.TimestampSeconds == 1.0);
+		TestTrue(TEXT("Window open borrows the same time"), Events[3].bTimeFromLastCall && Events[3].TimestampSeconds == 1.0);
+		TestTrue(TEXT("Window close borrows the later submit's time"),
+		         Events[5].bTimeFromLastCall && Events[5].TimestampSeconds == 1.2);
+
 		// 完成时消费缓冲产生下一段候选
 		const FCadenceArcDebugEvent& Finish = Events[6];
 		TestTrue(TEXT("Completion consumed the buffer"), Finish.Category == ECadenceArcResolutionCategory::RequestProduced);
@@ -251,6 +260,14 @@ namespace CadenceArc::Tests
 		         && AutoRelease.ProducedRequest.TargetActionTag == Action_Light02);
 		TestFalse(TEXT("Auto release is not a failure"), AutoRelease.bFailed);
 		TestTrue(TEXT("Advance records the input being held"), AutoRelease.InputTag == Input_Heavy);
+
+		// 没被记录的推进同样提供时间：之后不带时间的操作拿到的是最近一次推进的时刻
+		Resolver->AdvanceInputTime(3.4);
+		Resolver->NotifyActionStarted(AutoRelease.ProducedRequest.RequestId);
+		const TArray<FCadenceArcDebugEvent> After = ReadHistory(Resolver);
+		TestTrue(TEXT("Started borrows the last unrecorded advance time"),
+		         After.Last().Operation == ECadenceArcDebugOperation::ActionStarted
+		         && After.Last().bTimeFromLastCall && After.Last().TimestampSeconds == 3.4);
 		return !HasAnyErrors();
 	}
 

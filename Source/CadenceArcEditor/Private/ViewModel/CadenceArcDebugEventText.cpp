@@ -116,7 +116,9 @@ FCadenceArcDebugEventText FormatDebugEvent(const FCadenceArcDebugEvent& Event)
 	Text.bFailed = Event.bFailed;
 	if (Event.bHasTimestamp)
 	{
-		Text.Time = FString::Printf(TEXT("%.2fs"), Event.TimestampSeconds);
+		// "~" 表示这个操作本身不带时间，取的是此前最近一次带时间的调用（误差不超过一帧）
+		Text.Time = FString::Printf(TEXT("%s%.2fs"), Event.bTimeFromLastCall ? TEXT("~") : TEXT(""),
+		                            Event.TimestampSeconds);
 	}
 	const FString Committed = ShortName(Event.CommittedBefore);
 	const FString RequestId = FString::Printf(TEXT("#%lld"), static_cast<long long>(Event.CallerRequestId));

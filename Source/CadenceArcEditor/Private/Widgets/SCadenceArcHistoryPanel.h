@@ -37,6 +37,7 @@ private:
 	FText GetFollowingText() const;
 
 	TWeakObjectPtr<UCadenceArcResolver> ObservedResolver;
+	FString ObservedLabel; // 正在显示的实例名；实例结束后保留，用于回看
 	uint64 LastSequence = 0; // 已经读过的最新序号
 	uint64 ClearedThrough = 0; // Clear 之后只显示序号更大的记录
 	bool bFailuresOnly = false;

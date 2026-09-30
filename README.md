@@ -33,9 +33,12 @@ Available now:
 - shared graph validation for editor assets and resolver initialization;
 - a physical press/release tracker (`FCadenceArcInputTracker`);
 - resolver-side hold qualification: duration-based release tiers, time-derived charge stages, charge protection, and automatic release;
+- an editor-only, read-only runtime debugger: a live graph view (**Arc Debugger**) and a call history that explains failed calls (**Arc History**);
 - memory-only Unreal Automation Tests.
 
-Phase 6 (Hold input) is complete: the resolver runtime is covered by automated tests, and the Sandbox demo drives it with real press, release, and cancel events and per-frame game time. The Hold API has not yet been exercised in a shipped game, so treat its ergonomics as unsettled. Next: Phase 7, a read-only runtime graph debugger.
+Phase 6 (Hold input) is complete: the resolver runtime is covered by automated tests, and the Sandbox demo drives it with real press, release, and cancel events and per-frame game time. The Hold API has not yet been exercised in a shipped game, so treat its ergonomics as unsettled.
+
+Phase 7 (runtime debugger) is complete for local, single-process PIE. See [Runtime Debugger](#runtime-debugger-phase-7).
 
 ## Why the Handshake Exists
 
@@ -193,6 +196,7 @@ Rules that follow from this model:
 ### Host integration notes
 
 - A host that switches a key to `HoldRelease` must give the current node matching `Released` transitions for that tag. A node with only `Pressed` edges rejects `BeginInputHold` with `NoMatchingTransition`, and a `Pressed` edge on a `HoldRelease` tag is never matched.
+- After a qualification has ended (rejected at press, automatically released, replaced by another accepted input, or cancelled), the physical release is harmless but returns `NoMatchingHold`, which the debug history shows as a failed call. The Sandbox router checks `GetInputHoldSnapshot()` for its own token first and only then calls `ReleaseInputHold`.
 - A physical release that the host never delivers leaves the tracker pair and the qualification pending. The Sandbox demo cannot reach this, but a game that unpossesses and later re-possesses the same pawn while a key is held, or whose window-focus handling swallows the release, should call `CancelInputHold` and clear its tracker when control is lost. Whether Enhanced Input delivers `Completed` or `Canceled` in those cases has not been verified.
 - Unreal builds with MSVC `/fp:fast`. Code that deliberately inspects floating-point rounding must opt into precise semantics, as `CadenceArcHoldTiming.cpp` does with `#pragma float_control(precise, on)`.
 
@@ -201,6 +205,36 @@ Rules that follow from this model:
 `UCadenceArcGraph::ValidateGraph` is shared by editor asset validation (`IsDataValid`, under `WITH_EDITOR`) and `UCadenceArcResolver::Initialize`. It reports empty graphs, invalid or duplicate node tags, invalid or missing entry nodes, invalid age limits, invalid transition tags, missing targets, invalid phases or ranges, overlapping transitions, and invalid hold charge configuration.
 
 Validation never modifies the asset and emits diagnostics in deterministic array order. Initialization validates before replacing any state; failures return `InvalidGraph` and keep the previous configuration. Forward references, self-loops, cycles, terminal nodes, and reusing an input tag across nodes are allowed. Reachability analysis and edge priorities are not implemented. Resolution still checks current and target nodes at runtime, since graphs can change after initialization.
+
+## Runtime Debugger (Phase 7)
+
+The optional `CadenceArcEditor` module (`Type=Editor`) adds two Nomad tabs under **Tools > Debug**. Both only read: they never call a state-changing resolver API, never write the graph asset, and the runtime never calls back into them.
+
+### Arc Debugger
+
+Select a PIE resolver (listed as `Actor @ World`) to see its graph and live state, refreshed every frame:
+
+- the committed node (green header), a candidate awaiting `Started` (yellow outline and edge), and details for state, request, window, buffered input, and hold;
+- **branch focus**: the committed node's outgoing edges stay bright, nodes still reachable from it stay normal, and nodes the current path can no longer reach (without reset or interruption) are dimmed;
+- **preparatory edges** while a hold is pending: its source node's `Released` edges for that tag are drawn dashed with a charge fill that advances along the curve, and the tier a release would select right now is emphasized. A charge timeline shows press, charge start, full charge, and the automatic release deadline;
+- **Follow**: when the committed node changes, the view zooms out when needed (down to 0.6x) and scrolls so that the node and its direct successors are visible. Successors that still do not fit get clickable hints at the view edge.
+
+The layout is a deterministic layered (Sugiyama-style) layout: DFS back edges close cycles and are routed as dashed lines through lanes below the graph; columns follow the longest path so forward edges always point right; long edges reserve a channel in every column they cross and are drawn as monotone curves that stay inside the free space between nodes. The layout is rebuilt from the asset each frame; it never modifies the asset. Viewport zoom and pan beyond Follow, hover highlighting, and folding of long chains are not implemented.
+
+### Arc History
+
+Arc History follows the resolver selected in Arc Debugger and lists its calls newest first. Successful calls show one line (for example `Light P at Root → SkillA (request #5)` or `SkillA finished`); failed calls are marked red with a plain-language reason followed by the enum name (for example `No transition for Heavy P from SkillD (NoMatchingTransition)`). **Failures only** filters the list, and **Clear** hides existing rows without stopping recording.
+
+Recording contract:
+
+- Recording exists only under `WITH_EDITOR`. Packaged games contain neither the types nor the recording code. There is no capture switch.
+- Each public entry point calls a private `*Impl` that holds the unchanged business logic, then appends one fixed-size `FCadenceArcDebugEvent` to a 256-entry ring (`GetDebugHistory()`), oldest overwritten first. Queries are never recorded, and `AdvanceInputTime` is recorded only when it crosses a charge stage, releases automatically, or is rejected, so per-frame calls do not flush useful entries.
+- A call counts as failed when it did not do what it asked for: an input that produced neither a request nor a buffered entry, a refused hold, a release that selected no attack, a handshake that did not return `Success`, a failed reset or initialization, or a completion whose buffered input was dropped. Finishing with no buffered input and completing while a hold still waits for release are normal and are not failures.
+- Every row has a time. Calls that carry a timestamp show it; calls without one (`Started`, window changes, handshakes) show `~` plus the most recent host-supplied time the resolver received, which is at most one frame old because hosts call `AdvanceInputTime` every frame. The resolver still never reads a clock.
+
+The Sandbox demo executor exposes **Debug Scenarios** (`TimeScale`, `StartDelaySeconds`, `RejectEveryNthRequest`, `bSendStaleCallbacks`) to reproduce slow windows, visible candidates, executor rejections, and stale callbacks in PIE. `TimeScale` stretches only the executor's timing, not the graph's `MaxBufferedInputAgeSeconds`, so it also makes buffered inputs expire; to slow everything consistently for window testing, use the `slomo` console command instead.
+
+Arc History keeps the rows it has read after PIE ends (the header shows `(ended)`) and clears them when another resolver is selected.
 
 ## Runtime Model
 
@@ -283,18 +317,28 @@ CadenceArc/
 |-- Content/
 |-- Resources/
 `-- Source/
-    `-- CadenceArc/
-        |-- CadenceArc.Build.cs
+    |-- CadenceArc/              runtime module
+    |   |-- CadenceArc.Build.cs
+    |   |-- Public/
+    |   |   |-- Graph/
+    |   |   |-- Input/
+    |   |   `-- Resolver/
+    |   `-- Private/
+    |       |-- Graph/
+    |       |-- Input/
+    |       |-- Resolver/
+    |       `-- Tests/
+    `-- CadenceArcEditor/        editor-only debugger (Arc Debugger, Arc History)
+        |-- CadenceArcEditor.Build.cs
         |-- Public/
-        |   |-- Graph/
-        |   |-- Input/
-        |   `-- Resolver/
         `-- Private/
-            |-- Graph/
-            |-- Input/
-            |-- Resolver/
+            |-- Layout/          pure graph layout and follow math
+            |-- ViewModel/       pure debug view, history text, shared selection
+            |-- Widgets/         Slate panels and canvas
             `-- Tests/
 ```
+
+The runtime module never depends on the editor module; a non-editor (Game) target builds without it.
 
 CadenceArc is developed and validated through the separate [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox) project, where this repository is mounted under `Plugins/CadenceArc` as a Git submodule.
 
@@ -310,7 +354,14 @@ Tests live under `Source/CadenceArc/Private/Tests/` and build graphs in memory, 
 - `Resolver/CadenceArcResolverHoldTests.cpp` -- hold qualification, snapshots, stage crossings, manual and automatic release, protection, survival across completion, cancellation, lifecycle cleanup, decimal threshold boundaries, and frozen grant configuration;
 - `Graph/CadenceArcGraphValidationTests.cpp` -- graph topology validation;
 - `Graph/CadenceArcHoldValidationTests.cpp` -- phases, duration ranges, charge configuration, and naming redirects;
-- `Input/CadenceArcInputTrackerTests.cpp` -- press/release pairing, duration, tokens, and cleanup.
+- `Input/CadenceArcInputTrackerTests.cpp` -- press/release pairing, duration, tokens, and cleanup;
+- `Resolver/CadenceArcResolverDebugHistoryTests.cpp` (editor builds) -- recorded operations and order, failure classification, per-frame advance filtering, borrowed times, and ring capacity.
+
+Editor-module tests live under `Source/CadenceArcEditor/Private/Tests/`:
+
+- `CadenceArcGraphLayoutTests.cpp` -- layering, back edges, return lanes, barycenter ordering, and geometry of the actual drawn paths (no path crosses an unrelated node, entries land on the target title, columns never overlap), plus follow zoom, follow scrolling, and off-screen hints;
+- `CadenceArcDebugViewTests.cpp` -- the live view model: committed and candidate mapping, parallel edges, preparatory edges and charge progress, branch distances, and read-only behavior;
+- `CadenceArcDebugEventTextTests.cpp` -- the Arc History text shown for successful and failed calls.
 
 Coverage focuses on contracts rather than happy paths: failure atomicity for initialization and handshakes, stale and out-of-order callbacks, Last Input Wins replacement, exact expiry boundaries, zero/negative/non-finite/backwards time, deterministic diagnostics, and validation non-mutation.
 
@@ -339,10 +390,10 @@ Redirects are verified for loading and enum lookup; round-trip compatibility of 
 
 ## Roadmap
 
-1. Phase 7: a read-only runtime graph debugger showing state, candidate and committed transitions, buffer windows, hold qualifications, and diagnostic history.
-2. Pause and directional input conditions, additional expiry policies, priorities, and reachability analysis.
-3. Optional execution adapters, including GAS.
-4. Input recording, replay, networking, and prediction research.
+1. Pause and directional input conditions, additional expiry policies, priorities, and reachability analysis.
+2. Optional execution adapters, including GAS.
+3. Input recording, replay, networking, and prediction research.
+4. Debugger follow-ups: zoom and pan, hover highlighting, and optional folding of long chains.
 
 ## Requirements
 

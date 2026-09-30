@@ -148,8 +148,10 @@ private:
 #if WITH_EDITOR
 	// 调试历史只在编辑器构建中存在；不是 UPROPERTY，只保存值，不参与序列化和 GC
 	FCadenceArcDebugHistory DebugHistory;
+	double DebugLastHostTime = -1.0; // 最近一次调用方传入的有效时间，供不带时间的记录使用；负数表示还没有
 	FCadenceArcDebugEvent BeginDebugRecord(ECadenceArcDebugOperation Operation) const;
 	void EndDebugRecord(FCadenceArcDebugEvent& Record);
+	void NoteDebugHostTime(double Seconds);
 #endif
 
 public:

@@ -39,8 +39,11 @@ struct FCadenceArcDebugEvent
 	// ---- 调用参数 ----
 	FGameplayTag InputTag;
 	ECadenceArcInputPhase InputPhase = ECadenceArcInputPhase::Pressed;
-	bool bHasTimestamp = false; // 这个操作带有调用方提供的时间
+	bool bHasTimestamp = false; // 有时间可显示（调用自带，或取自此前最近一次带时间的调用）
 	double TimestampSeconds = 0.0;
+	// 这个操作本身不带时间（Started、窗口开关等），TimestampSeconds 取自此前最近一次带时间的调用。
+	// 宿主每帧都会带着当前时间调用 AdvanceInputTime，所以误差不超过一帧；Resolver 自己从不读时钟。
+	bool bTimeFromLastCall = false;
 	bool bHasHeldDuration = false; // 松手（手动或自动）时的按住时长
 	double HeldDurationSeconds = 0.0;
 	int64 CallerRequestId = 0; // 握手与窗口操作时调用方传入的请求编号

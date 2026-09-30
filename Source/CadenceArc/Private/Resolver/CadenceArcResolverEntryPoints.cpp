@@ -76,8 +76,23 @@ FCadenceArcDebugEvent UCadenceArcResolver::BeginDebugRecord(const ECadenceArcDeb
 	return Record;
 }
 
+void UCadenceArcResolver::NoteDebugHostTime(const double Seconds)
+{
+	if (FMath::IsFinite(Seconds) && Seconds >= 0.0)
+	{
+		DebugLastHostTime = Seconds;
+	}
+}
+
 void UCadenceArcResolver::EndDebugRecord(FCadenceArcDebugEvent& Record)
 {
+	// 不带时间的操作取此前最近一次带时间的调用：同一帧里 Submit 之后的 Started 拿到的就是这一帧的时间
+	if (!Record.bHasTimestamp && DebugLastHostTime >= 0.0)
+	{
+		Record.bHasTimestamp = true;
+		Record.bTimeFromLastCall = true;
+		Record.TimestampSeconds = DebugLastHostTime;
+	}
 	Record.StateAfter = State;
 	Record.CommittedAfter = CurrentActionTag;
 	DebugHistory.Add(MoveTemp(Record));
@@ -103,6 +118,7 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::SubmitInput(const FCadenceArcInput
 #if WITH_EDITOR
 	FCadenceArcDebugEvent Record = BeginDebugRecord(ECadenceArcDebugOperation::SubmitInput);
 	RecordInput(Record, InInputEvent);
+	NoteDebugHostTime(InInputEvent.TimestampSeconds);
 #endif
 	FCadenceArcSubmitOutcome Outcome = SubmitInputImpl(InInputEvent);
 #if WITH_EDITOR
@@ -159,6 +175,7 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(
 	FCadenceArcDebugEvent Record = BeginDebugRecord(ECadenceArcDebugOperation::ActionCompleted);
 	Record.bHasTimestamp = true;
 	Record.TimestampSeconds = CompletionTimestampSeconds;
+	NoteDebugHostTime(CompletionTimestampSeconds);
 #endif
 	FCadenceArcActionCompletionOutcome Outcome = NotifyActionCompletedImpl(InRequestId, CompletionTimestampSeconds);
 #if WITH_EDITOR
@@ -237,6 +254,7 @@ FCadenceArcHoldOutcome UCadenceArcResolver::BeginInputHold(
 #if WITH_EDITOR
 	FCadenceArcDebugEvent Record = BeginDebugRecord(ECadenceArcDebugOperation::BeginHold);
 	RecordInput(Record, PressEvent);
+	NoteDebugHostTime(PressEvent.TimestampSeconds);
 #endif
 	FCadenceArcHoldOutcome Outcome = BeginInputHoldImpl(Token, PressEvent);
 #if WITH_EDITOR
@@ -254,6 +272,7 @@ FCadenceArcInputAdvanceOutcome UCadenceArcResolver::ReleaseInputHold(
 #if WITH_EDITOR
 	FCadenceArcDebugEvent Record = BeginDebugRecord(ECadenceArcDebugOperation::ReleaseHold);
 	RecordInput(Record, ReleaseEvent);
+	NoteDebugHostTime(ReleaseEvent.TimestampSeconds);
 #endif
 	FCadenceArcInputAdvanceOutcome Outcome = ReleaseInputHoldImpl(Token, ReleaseEvent);
 #if WITH_EDITOR
@@ -270,6 +289,7 @@ FCadenceArcInputAdvanceOutcome UCadenceArcResolver::AdvanceInputTime(const doubl
 	Record.bHasTimestamp = true;
 	Record.TimestampSeconds = NowSeconds;
 	Record.InputTag = InputSlot.InputEvent.InputTag; // 推进的是哪个按住资格；没有资格时为空
+	NoteDebugHostTime(NowSeconds); // 即使这次推进不记录，也用它给之后不带时间的记录提供时间
 #endif
 	FCadenceArcInputAdvanceOutcome Outcome = AdvanceInputTimeImpl(NowSeconds);
 #if WITH_EDITOR
