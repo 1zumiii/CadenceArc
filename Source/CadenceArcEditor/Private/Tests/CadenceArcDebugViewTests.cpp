@@ -721,6 +721,85 @@ namespace CadenceArc::Editor::Tests
 		                  {-1.f}, INDEX_NONE, INDEX_NONE);
 		return !HasAnyErrors();
 	}
+
+	// ---- 分支聚焦：从已提交节点出发还要几步 ----
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcDebugViewBranchDistanceTest,
+		"CadenceArc.Editor.DebugView.BranchDistanceFromCommitted",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcDebugViewBranchDistanceTest::RunTest(const FString& Parameters)
+	{
+		// 未初始化没有已提交节点：不做分支聚焦
+		{
+			const UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+			const FCadenceArcDebugView View =
+				BuildReadOnly(*this, TEXT("Uninitialized"), *Resolver, BuildGraphLayout(*MakeViewGraph()));
+			TestEqual(TEXT("Uninitialized: no distances"), View.NodeDistance.Num(), 0);
+		}
+
+		FViewFixture Fixture;
+		FCadenceArcActionRequest Request;
+		if (!MakeViewFixture(*this, Fixture))
+		{
+			return false;
+		}
+		// 在 Root：Root 0，下一步 Light01 为 1（两条平行边只算一次），再下一步 Light02 为 2
+		{
+			const FCadenceArcDebugView View = BuildReadOnly(*this, TEXT("At Root"), *Fixture.Resolver, Fixture.Layout);
+			if (TestEqual(TEXT("At Root: one distance per node"), View.NodeDistance.Num(), 3))
+			{
+				TestEqual(TEXT("At Root: Root"), View.NodeDistance[ViewNode_Root], 0);
+				TestEqual(TEXT("At Root: Light01"), View.NodeDistance[ViewNode_Light01], 1);
+				TestEqual(TEXT("At Root: Light02"), View.NodeDistance[ViewNode_Light02], 2);
+			}
+		}
+		// 提交到 Light01 后，Root 在这条路上已经走不到（没有边回去；Reset 不算）
+		if (!RequestPress(*this, Fixture.Resolver, View_InputLight(), Request)
+			|| !TestTrue(TEXT("Started accepted"),
+			             Fixture.Resolver->NotifyActionStarted(Request.RequestId) == ECadenceArcHandshakeResult::Success))
+		{
+			return false;
+		}
+		{
+			const FCadenceArcDebugView View = BuildReadOnly(*this, TEXT("At Light01"), *Fixture.Resolver, Fixture.Layout);
+			if (TestEqual(TEXT("At Light01: one distance per node"), View.NodeDistance.Num(), 3))
+			{
+				TestEqual(TEXT("At Light01: Light01"), View.NodeDistance[ViewNode_Light01], 0);
+				TestEqual(TEXT("At Light01: Light02"), View.NodeDistance[ViewNode_Light02], 1);
+				TestEqual(TEXT("At Light01: Root is off the path"), View.NodeDistance[ViewNode_Root], INDEX_NONE);
+			}
+		}
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcDebugViewBranchLoopTest,
+		"CadenceArc.Editor.DebugView.BranchDistanceFollowsLoops",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcDebugViewBranchLoopTest::RunTest(const FString& Parameters)
+	{
+		// 布局里 Light02 有一条回到 Root 的循环边：停在 Light01 时，沿循环还能回到 Root，所以 Root 不变暗
+		FViewFixture Fixture;
+		FCadenceArcActionRequest Request;
+		if (!MakeViewFixture(*this, Fixture) || !RequestPress(*this, Fixture.Resolver, View_InputLight(), Request))
+		{
+			return false;
+		}
+		Fixture.Resolver->NotifyActionStarted(Request.RequestId);
+		UCadenceArcGraph* Looped = MakeViewGraph();
+		AddViewTransition(Looped->Nodes[ViewNode_Light02], View_InputLight(), View_Root());
+		const FCadenceArcDebugView View =
+			BuildReadOnly(*this, TEXT("Loop"), *Fixture.Resolver, BuildGraphLayout(*Looped));
+		if (TestEqual(TEXT("Loop: one distance per node"), View.NodeDistance.Num(), 3))
+		{
+			TestEqual(TEXT("Loop: Light02"), View.NodeDistance[ViewNode_Light02], 1);
+			TestEqual(TEXT("Loop: Root reachable through the loop"), View.NodeDistance[ViewNode_Root], 2);
+		}
+		return !HasAnyErrors();
+	}
 }
 
 #endif

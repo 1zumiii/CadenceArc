@@ -22,6 +22,9 @@ struct FCadenceArcDebugView
 	TArray<float> PreparatoryEdgeProgress;
 	int32 CurrentReleaseEdgeIndex = INDEX_NONE;
 	int32 CurrentReleaseTargetNodeIndex = INDEX_NONE;
+	// 与 Layout.Nodes 对齐：从已提交节点出发沿出边的最少步数（已提交节点为 0，循环边照常计入）；
+	// 不按 Reset、不被打断就再也走不到的节点为 INDEX_NONE。没有已提交节点时为空数组。
+	TArray<int32> NodeDistance;
 };
 
 // 每次都从默认值开始构建，不会残留上一帧的候选；只调用 Resolver 的 const 读取接口和 Layout 中的边副本。

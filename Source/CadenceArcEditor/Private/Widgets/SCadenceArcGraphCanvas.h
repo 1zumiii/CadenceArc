@@ -26,8 +26,20 @@ public:
 	}
 
 	const FCadenceArcGraphLayout& GetLayout() const { return Layout; }
-	// 节点在画布局部坐标中的矩形；索引无效时返回空，供面板把节点滚进视口
+	// 节点在画布局部坐标中的矩形（已乘缩放）；索引无效时返回空，供面板把节点滚进视口
 	TOptional<FBox2D> GetNodeBounds(int32 NodeIndex) const;
+	// 节点在布局坐标中的矩形（不乘缩放），用于计算需要的缩放比例
+	TOptional<FBox2D> GetNodeLayoutBounds(int32 NodeIndex) const;
+
+	// 边的条件文字（例如 "Heavy R [0.6, ∞)"），供面板在去向提示里复用
+	FString GetEdgeLabel(const int32 EdgeIndex) const
+	{
+		return EdgeLabels.IsValidIndex(EdgeIndex) ? EdgeLabels[EdgeIndex] : FString();
+	}
+
+	// 整张图按比例绘制，期望尺寸跟着缩放；布局坐标本身不变
+	void SetZoom(float InZoom);
+	float GetZoom() const { return Zoom; }
 	void SetDebugView(const FCadenceArcDebugView& InDebugView);
 
 
@@ -61,6 +73,7 @@ private:
 
 	// 布局和绘制共用同一份几何参数；节点位置、尺寸和连线路径都由布局给出，画布不再自己算。
 	FCadenceArcLayoutParams Params;
+	float Zoom = 1.f;
 
 	// 以下都在 SetGraph 里一次算好，OnPaint 只读这些，不再按下标访问活资产：
 	// 面板开着时资产被删改，也不会拿旧下标越界。

@@ -73,3 +73,19 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 double ComputeFollowOffset(
 	double CurrentOffset, double Visible, double PrimaryMin, double PrimaryMax,
 	double GroupMin, double GroupMax, double Margin, double MaxOffset);
+
+// 视口跟随的缩放：当前节点和直接后继组成的整组（布局坐标下的宽高）在 1 倍下放得下时为 1；
+// 放不下时缩到刚好放下（四周留 Margin），但不低于 MinZoom，保证文字仍可读。视口尚未排布时返回 CurrentZoom。
+double ComputeFollowZoom(
+	double CurrentZoom, double VisibleWidth, double VisibleHeight,
+	double GroupWidth, double GroupHeight, double Margin, double MinZoom);
+
+// 视口外的去向提示：Target 与 Viewport 完全不相交时，给出提示在视口内的锚点（目标中心夹进视口、
+// 各边留 Inset）和指向目标的单位方向；目标有任何部分可见时不提示。两个矩形使用同一坐标系。
+struct FCadenceArcOffscreenHint
+{
+	FVector2D Anchor = FVector2D::ZeroVector;
+	FVector2D Direction = FVector2D::ZeroVector;
+};
+
+TOptional<FCadenceArcOffscreenHint> ComputeOffscreenHint(const FBox2D& Viewport, const FBox2D& Target, double Inset);

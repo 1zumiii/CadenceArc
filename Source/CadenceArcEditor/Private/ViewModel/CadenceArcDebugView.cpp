@@ -93,6 +93,27 @@ FCadenceArcDebugView BuildDebugView(const UCadenceArcResolver& InResolver, const
 			Request.InputTag);
 	}
 
+	// 分支聚焦：从已提交节点沿出边做一次广度优先，得到每个节点还要几步才能走到
+	if (DebugView.CommittedNodeIndex != INDEX_NONE)
+	{
+		DebugView.NodeDistance.Init(INDEX_NONE, InLayout.Nodes.Num());
+		DebugView.NodeDistance[DebugView.CommittedNodeIndex] = 0;
+		TArray<int32> Frontier = {DebugView.CommittedNodeIndex};
+		for (int32 Head = 0; Head < Frontier.Num(); ++Head)
+		{
+			const int32 Source = Frontier[Head];
+			for (const FCadenceArcLayoutEdge& Edge : InLayout.Edges)
+			{
+				if (Edge.SourceNodeIndex == Source && !Edge.IsBrokenTarget()
+					&& DebugView.NodeDistance[Edge.TargetNodeIndex] == INDEX_NONE)
+				{
+					DebugView.NodeDistance[Edge.TargetNodeIndex] = DebugView.NodeDistance[Source] + 1;
+					Frontier.Add(Edge.TargetNodeIndex);
+				}
+			}
+		}
+	}
+
 	DebugView.bBufferWindowOpen = InResolver.IsBufferWindowOpen();
 	DebugView.BufferedInputTag = InResolver.GetBufferedInputTag();
 	DebugView.HoldSnapshot = InResolver.GetInputHoldSnapshot();

@@ -7,7 +7,13 @@
 
 namespace
 {
-	constexpr float UnfocusedAlpha = 0.25f; // 与当前焦点无关的边淡化到这个透明度
+	// 分支聚焦的三档透明度：下一步（及候选、预备边）不透明；之后还能走到的一档；这条路上已经走不到的最淡
+	constexpr float OnPathEdgeAlpha = 0.55f;
+	constexpr float OffPathEdgeAlpha = 0.12f;
+	constexpr float OnPathLabelAlpha = 0.8f;
+	constexpr float OffPathLabelAlpha = 0.3f;
+	constexpr float OffPathNodeAlpha = 0.35f;
+	const FLinearColor NextStepHeaderColor(0.36f, 0.38f, 0.50f); // 下一步节点的标题行稍亮
 
 	const FLinearColor BodyColor(0.16f, 0.16f, 0.20f);
 	const FLinearColor HeaderColor(0.26f, 0.26f, 0.32f);
@@ -185,7 +191,26 @@ void SCadenceArcGraphCanvas::SetGraph(const UCadenceArcGraph* InGraph)
 
 FVector2D SCadenceArcGraphCanvas::ComputeDesiredSize(float) const
 {
-	return Layout.Nodes.IsEmpty() ? FVector2D(2.0 * Params.Padding, 2.0 * Params.Padding) : Layout.Size;
+	return (Layout.Nodes.IsEmpty() ? FVector2D(2.0 * Params.Padding, 2.0 * Params.Padding) : Layout.Size) * Zoom;
+}
+
+void SCadenceArcGraphCanvas::SetZoom(const float InZoom)
+{
+	if (InZoom != Zoom)
+	{
+		Zoom = InZoom;
+		Invalidate(EInvalidateWidgetReason::Layout | EInvalidateWidgetReason::Paint);
+	}
+}
+
+TOptional<FBox2D> SCadenceArcGraphCanvas::GetNodeLayoutBounds(const int32 NodeIndex) const
+{
+	if (!Layout.Nodes.IsValidIndex(NodeIndex))
+	{
+		return {};
+	}
+	const FCadenceArcLayoutNode& Node = Layout.Nodes[NodeIndex];
+	return FBox2D(Node.Position, Node.Position + Node.Size);
 }
 
 TOptional<FBox2D> SCadenceArcGraphCanvas::GetNodeBounds(const int32 NodeIndex) const
@@ -195,7 +220,7 @@ TOptional<FBox2D> SCadenceArcGraphCanvas::GetNodeBounds(const int32 NodeIndex) c
 		return {};
 	}
 	const FCadenceArcLayoutNode& Node = Layout.Nodes[NodeIndex];
-	return FBox2D(Node.Position, Node.Position + Node.Size);
+	return FBox2D(Node.Position * Zoom, (Node.Position + Node.Size) * Zoom);
 }
 
 int32 SCadenceArcGraphCanvas::OnPaint(
@@ -208,6 +233,8 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 	{
 		return LayerId;
 	}
+	// 所有绘制都用布局坐标；缩放放在这层子几何上，文字、线宽和节点一起按比例缩放
+	const FGeometry Geometry = AllottedGeometry.MakeChild(Layout.Size, FSlateLayoutTransform(Zoom));
 
 	const int32 EdgeLayer = LayerId; // 最底层：连线
 	const int32 BodyLayer = LayerId + 1; // 节点主体
@@ -217,18 +244,28 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 	const FSlateFontInfo HeaderFont = FCoreStyle::GetDefaultFontStyle("Bold", 9);
 	const FSlateFontInfo PortFont = FCoreStyle::GetDefaultFontStyle("Regular", 8);
 	const FSlateBrush* WhiteBrush = FAppStyle::GetBrush("WhiteBrush"); // 纯白画刷，靠 Tint 着色
-	const FPaintGeometry CanvasGeometry = AllottedGeometry.ToPaintGeometry(); // 整块画布，点坐标用局部坐标
+	const FPaintGeometry CanvasGeometry = Geometry.ToPaintGeometry(); // 整块画布，点坐标用局部坐标
 	const FCadenceArcGraphPalette Palette;
 
-	// 焦点：已提交节点的出边（下一步可走的边）、候选边和预备边保持原样，其余的边淡化。
-	// 没有已提交节点（Resolver 还没选中或未初始化）时不淡化。
-	const auto IsFocusedEdge = [this](const int32 EdgeIndex)
+	// 分支聚焦：按"从已提交节点出发还要几步"分档。
+	// 已提交节点的出边（下一步）、候选边、预备边不淡化；源节点还能走到的边中等；
+	// 源节点在这条路上已经走不到的边最淡。没有已提交节点时（Resolver 未选中或未初始化）都不淡化。
+	enum class EEmphasis : uint8 { Full, OnPath, OffPath };
+	const auto NodeDistance = [this](const int32 NodeIndex)
+	{
+		return DebugView.NodeDistance.IsValidIndex(NodeIndex) ? DebugView.NodeDistance[NodeIndex] : 0;
+	};
+	const auto EdgeEmphasis = [this, &NodeDistance](const int32 EdgeIndex)
 	{
 		const bool bPreparatory = DebugView.PreparatoryEdgeProgress.IsValidIndex(EdgeIndex)
 			&& DebugView.PreparatoryEdgeProgress[EdgeIndex] >= 0.f;
-		return DebugView.CommittedNodeIndex == INDEX_NONE
-			|| Layout.Edges[EdgeIndex].SourceNodeIndex == DebugView.CommittedNodeIndex
-			|| EdgeIndex == DebugView.CandidateEdgeIndex || bPreparatory;
+		const int32 Source = Layout.Edges[EdgeIndex].SourceNodeIndex;
+		if (DebugView.CommittedNodeIndex == INDEX_NONE || Source == DebugView.CommittedNodeIndex
+			|| EdgeIndex == DebugView.CandidateEdgeIndex || bPreparatory)
+		{
+			return EEmphasis::Full;
+		}
+		return NodeDistance(Source) == INDEX_NONE ? EEmphasis::OffPath : EEmphasis::OnPath;
 	};
 
 	// 连线：路径由布局给出，第一个点是端口，最后一个点是接入点
@@ -249,7 +286,7 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 		{
 			// 目标不存在：短线末端加问号
 			DrawLabel(
-				OutDrawElements, TextLayer, AllottedGeometry,
+				OutDrawElements, TextLayer, Geometry,
 				FVector2D(Edge.Path.Last().X + 3.f, Edge.Path.Last().Y - 8.f),
 				FVector2D(16.f, 16.f), TEXT("?"), HeaderFont, BrokenColor
 			);
@@ -272,9 +309,11 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 		FLinearColor Color = bCandidateEdge
 			? Palette.CandidateEdge
 			: (Edge.IsBrokenTarget() ? BrokenColor : ColorForEdge(EdgeIndex));
-		if (!IsFocusedEdge(EdgeIndex))
+		switch (EdgeEmphasis(EdgeIndex))
 		{
-			Color.A = UnfocusedAlpha;
+		case EEmphasis::OnPath: Color.A = OnPathEdgeAlpha; break;
+		case EEmphasis::OffPath: Color.A = OffPathEdgeAlpha; break;
+		default: break;
 		}
 		const float EdgeThickness = bCandidateEdge ? 3.f : 1.5f;
 		if (Edge.ReturnLane != INDEX_NONE && !bCandidateEdge)
@@ -302,25 +341,30 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 		const FCadenceArcLayoutNode& Node = Layout.Nodes[NodeIndex];
 		const FVector2D TopLeft = Node.Position;
 		const FVector2D Size = Node.Size;
+		// 这条路上已经走不到的节点整体变淡；下一步节点的标题行稍亮
+		const bool bOffPath = NodeDistance(NodeIndex) == INDEX_NONE;
+		const float NodeAlpha = bOffPath ? OffPathNodeAlpha : 1.f;
+		FLinearColor BodyFill = Node.bReachable ? BodyColor : UnreachableBodyColor; // 不可达节点调暗
+		FLinearColor HeaderFill = NodeIndex == DebugView.CommittedNodeIndex
+			? Palette.CommittedNodeFill
+			: (NodeDistance(NodeIndex) == 1 ? NextStepHeaderColor : (Node.bReachable ? HeaderColor : UnreachableHeaderColor));
+		BodyFill.A *= NodeAlpha;
+		HeaderFill.A *= NodeAlpha;
 
 		FSlateDrawElement::MakeBox(
 			OutDrawElements, BodyLayer,
-			AllottedGeometry.ToPaintGeometry(Size, FSlateLayoutTransform(TopLeft)),
-			WhiteBrush, ESlateDrawEffect::None,
-			Node.bReachable ? BodyColor : UnreachableBodyColor); // 不可达节点调暗
+			Geometry.ToPaintGeometry(Size, FSlateLayoutTransform(TopLeft)),
+			WhiteBrush, ESlateDrawEffect::None, BodyFill);
 		FSlateDrawElement::MakeBox(
 			OutDrawElements, HeaderLayer,
-			AllottedGeometry.ToPaintGeometry(
+			Geometry.ToPaintGeometry(
 				FVector2D(Size.X, Params.HeaderHeight), FSlateLayoutTransform(TopLeft)
 			),
-			WhiteBrush, ESlateDrawEffect::None,
-			NodeIndex == DebugView.CommittedNodeIndex
-				? Palette.CommittedNodeFill
-				: (Node.bReachable ? HeaderColor : UnreachableHeaderColor));
-		DrawLabel(OutDrawElements, TextLayer, AllottedGeometry, TopLeft + FVector2D(8.f, 4.f),
+			WhiteBrush, ESlateDrawEffect::None, HeaderFill);
+		DrawLabel(OutDrawElements, TextLayer, Geometry, TopLeft + FVector2D(8.f, 4.f),
 		          FVector2D(Size.X - 16.f, Params.HeaderHeight),
 		          ShortTagName(Node.ActionTag), HeaderFont,
-		          FLinearColor::White);
+		          FLinearColor(1.f, 1.f, 1.f, bOffPath ? 0.4f : 1.f));
 
 		constexpr float OutlineMargin = 3.f;
 		const FVector2D Min = TopLeft - FVector2D(OutlineMargin, OutlineMargin);
@@ -366,15 +410,17 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 			DebugView.PreparatoryEdgeProgress[EdgeIndex] >= 0.f;
 		FLinearColor DisplayColor = EdgeIndex == DebugView.CandidateEdgeIndex
 			? Palette.CandidateEdge : (bPreparatoryEdge ? Palette.PreparatoryEdge : Color);
-		if (!IsFocusedEdge(EdgeIndex))
+		switch (EdgeEmphasis(EdgeIndex)) // 文字比连线淡得少一些，仍然要能读
 		{
-			DisplayColor.A = 0.5f; // 文字比连线淡得少一些，仍然要能读
+		case EEmphasis::OnPath: DisplayColor.A = OnPathLabelAlpha; break;
+		case EEmphasis::OffPath: DisplayColor.A = OffPathLabelAlpha; break;
+		default: break;
 		}
 		const FCadenceArcLayoutNode& Source = Layout.Nodes[Edge.SourceNodeIndex];
 		const FVector2D RowTopLeft = Source.Position
 			+ FVector2D(10.f, Params.HeaderHeight + Edge.TransitionIndex * Params.PortHeight + 1.f);
 		DrawLabel(
-			OutDrawElements, TextLayer, AllottedGeometry, RowTopLeft,
+			OutDrawElements, TextLayer, Geometry, RowTopLeft,
 			FVector2D(Source.Size.X - 24.f, Params.PortHeight),
 			EdgeLabels[EdgeIndex], PortFont,
 			DisplayColor
@@ -384,7 +430,7 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 		{
 			FSlateDrawElement::MakeBox(
 				OutDrawElements, HeaderLayer,
-				AllottedGeometry.ToPaintGeometry(
+				Geometry.ToPaintGeometry(
 					FVector2D(6.f, 6.f),
 					FSlateLayoutTransform(Edge.Path[0] - FVector2D(3.f, 3.f))
 				),

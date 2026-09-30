@@ -760,3 +760,38 @@ double ComputeFollowOffset(
 	}
 	return FMath::Clamp(Result, 0.0, FMath::Max(MaxOffset, 0.0));
 }
+
+double ComputeFollowZoom(
+	const double CurrentZoom, const double VisibleWidth, const double VisibleHeight,
+	const double GroupWidth, const double GroupHeight, const double Margin, const double MinZoom)
+{
+	if (VisibleWidth <= 0.0 || VisibleHeight <= 0.0)
+	{
+		return CurrentZoom; // 还没完成第一次排布
+	}
+	double Zoom = 1.0;
+	if (GroupWidth > 0.0)
+	{
+		Zoom = FMath::Min(Zoom, (VisibleWidth - 2.0 * Margin) / GroupWidth);
+	}
+	if (GroupHeight > 0.0)
+	{
+		Zoom = FMath::Min(Zoom, (VisibleHeight - 2.0 * Margin) / GroupHeight);
+	}
+	return FMath::Clamp(Zoom, MinZoom, 1.0);
+}
+
+TOptional<FCadenceArcOffscreenHint> ComputeOffscreenHint(const FBox2D& Viewport, const FBox2D& Target, const double Inset)
+{
+	if (Viewport.Intersect(Target))
+	{
+		return {};
+	}
+	const FVector2D Center = Target.GetCenter();
+	FCadenceArcOffscreenHint Hint;
+	Hint.Anchor = FVector2D(
+		FMath::Clamp(Center.X, Viewport.Min.X + Inset, FMath::Max(Viewport.Min.X + Inset, Viewport.Max.X - Inset)),
+		FMath::Clamp(Center.Y, Viewport.Min.Y + Inset, FMath::Max(Viewport.Min.Y + Inset, Viewport.Max.Y - Inset)));
+	Hint.Direction = (Center - Hint.Anchor).GetSafeNormal();
+	return Hint;
+}

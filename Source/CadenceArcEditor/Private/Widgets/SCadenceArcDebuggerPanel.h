@@ -10,6 +10,7 @@ class UCadenceArcResolver;
 class SCadenceArcGraphCanvas;
 class SCadenceArcChargeTimeline;
 class SScrollBox;
+class SCanvas;
 /**
  * 
  */
@@ -41,9 +42,15 @@ class SCadenceArcDebuggerPanel : public SCompoundWidget
 	int32 LastFollowedNodeIndex = INDEX_NONE;
 	int32 PendingFollowFrames = 0; // 换图后滚动区的内容尺寸下一帧才更新，跟随要连续做几帧
 
+	// 视口外去向提示：当前节点的直接后继完全不在视口内时，在边缘放一个可点击的提示
+	TSharedPtr<SCanvas> HintCanvas;
+	FString HintSignature; // 上一次提示的内容，没变就不重建按钮
+
 	void StopRefreshTimer();
 	void FollowCommittedNode();
 	void RequestFollow();
+	void UpdateOffscreenHints();
+	void ScrollNodeIntoView(int32 NodeIndex);
 	void RefreshSelectedResolver();
 	FText GetStateText() const;
 	FText GetRequestText() const;

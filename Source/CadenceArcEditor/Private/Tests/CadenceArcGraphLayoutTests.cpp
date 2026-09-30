@@ -867,6 +867,67 @@ namespace CadenceArc::Editor::Tests
 		          ComputeFollowOffset(123.0, 0.0, 600.0, 700.0, 600.0, 900.0, Margin, MaxOffset), 123.0);
 		return !HasAnyErrors();
 	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcLayoutFollowZoomTest,
+		"CadenceArc.Editor.Layout.FollowZoom",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcLayoutFollowZoomTest::RunTest(const FString& Parameters)
+	{
+		constexpr double Margin = 40.0;
+		constexpr double MinZoom = 0.6;
+		// 1 倍放得下：不缩放（也不放大）
+		TestEqual(TEXT("Fitting group keeps 1x"),
+		          ComputeFollowZoom(1.0, 1000.0, 600.0, 800.0, 400.0, Margin, MinZoom), 1.0);
+		// 放不下：缩到刚好放下，取更紧的那个方向
+		TestEqual(TEXT("Wide group shrinks to fit"),
+		          ComputeFollowZoom(1.0, 1000.0, 600.0, 1100.0, 300.0, Margin, MinZoom), 920.0 / 1100.0, 1.e-9);
+		TestEqual(TEXT("Tall group shrinks to fit"),
+		          ComputeFollowZoom(1.0, 1000.0, 600.0, 500.0, 800.0, Margin, MinZoom), 520.0 / 800.0, 1.e-9);
+		// 太大的整组不会缩到读不清：停在下限
+		TestEqual(TEXT("Huge group stops at the readable minimum"),
+		          ComputeFollowZoom(1.0, 1000.0, 600.0, 3000.0, 300.0, Margin, MinZoom), MinZoom);
+		// 视口还没排布：保持当前缩放
+		TestEqual(TEXT("Unmeasured viewport keeps zoom"),
+		          ComputeFollowZoom(0.8, 0.0, 600.0, 3000.0, 300.0, Margin, MinZoom), 0.8);
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcLayoutOffscreenHintTest,
+		"CadenceArc.Editor.Layout.OffscreenHint",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcLayoutOffscreenHintTest::RunTest(const FString& Parameters)
+	{
+		const FBox2D Viewport(FVector2D(0.0, 0.0), FVector2D(1000.0, 600.0));
+		constexpr double Inset = 16.0;
+		// 目标在视口内或部分可见：不提示
+		TestFalse(TEXT("Visible target has no hint"),
+		          ComputeOffscreenHint(Viewport, FBox2D(FVector2D(100.0, 100.0), FVector2D(280.0, 130.0)), Inset).IsSet());
+		TestFalse(TEXT("Partly visible target has no hint"),
+		          ComputeOffscreenHint(Viewport, FBox2D(FVector2D(990.0, 100.0), FVector2D(1170.0, 130.0)), Inset).IsSet());
+		// 目标在右侧：提示贴在右边缘内侧，与目标同高，指向右
+		const TOptional<FCadenceArcOffscreenHint> Right =
+			ComputeOffscreenHint(Viewport, FBox2D(FVector2D(1200.0, 100.0), FVector2D(1380.0, 130.0)), Inset);
+		if (TestTrue(TEXT("Right target has a hint"), Right.IsSet()))
+		{
+			TestTrue(TEXT("Right hint anchor"), Right->Anchor.Equals(FVector2D(984.0, 115.0), 1.e-9));
+			TestTrue(TEXT("Right hint points right"), Right->Direction.Equals(FVector2D(1.0, 0.0), 1.e-9));
+		}
+		// 目标在左下方：提示夹在左下角内侧，方向指向目标中心
+		const TOptional<FCadenceArcOffscreenHint> LowerLeft =
+			ComputeOffscreenHint(Viewport, FBox2D(FVector2D(-300.0, 800.0), FVector2D(-120.0, 830.0)), Inset);
+		if (TestTrue(TEXT("Lower-left target has a hint"), LowerLeft.IsSet()))
+		{
+			TestTrue(TEXT("Lower-left hint anchor"), LowerLeft->Anchor.Equals(FVector2D(16.0, 584.0), 1.e-9));
+			TestTrue(TEXT("Lower-left hint points down-left"),
+			         LowerLeft->Direction.X < 0.0 && LowerLeft->Direction.Y > 0.0
+			         && FMath::IsNearlyEqual(LowerLeft->Direction.Size(), 1.0, 1.e-9));
+		}
+		return !HasAnyErrors();
+	}
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS
