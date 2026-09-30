@@ -54,13 +54,10 @@ public:
 	// Arc History 里点中的记录对应的节点和边（索引指向当前布局）；空数组和 INDEX_NONE 表示没有
 	void SetHistoryFocus(const TArray<int32>& InNodes, int32 InEdge);
 
-	// 列号相差不小于 MinSpan 的边画成引用标记（0 关闭），立即重新布局。节点和边的索引不变，调试状态保留。
-	void SetReferenceMinSpan(int32 MinSpan);
-	int32 GetReferenceMinSpan() const { return Params.ReferenceMinSpan; }
-
-	// 只改变几何布局；运行时状态、历史焦点和当前缩放不变。
-	void SetLayoutMode(ECadenceArcLayoutMode InMode);
-	ECadenceArcLayoutMode GetLayoutMode() const { return Params.Mode; }
+	// 换一套布局选项（紧凑链、引用标记、走线方式、端口重排等）并立即重新布局。
+	// 只改变几何：节点和边的索引不变，运行时状态、历史焦点和当前缩放都保留。
+	void SetLayoutParams(const FCadenceArcLayoutParams& InParams);
+	const FCadenceArcLayoutParams& GetLayoutParams() const { return Params; }
 
 	// 左键点引用标记跳到目标、点目标一侧的接入线跳回源节点；滚动区在面板里，画布只报告要看哪个节点
 	void SetNavigateHandler(TFunction<void(int32 NodeIndex)> InOnNavigate) { OnNavigate = MoveTemp(InOnNavigate); }
@@ -81,6 +78,24 @@ public:
 
 private:
 	void RebuildGeometry(bool bResetHover = true);
+
+	// ---- 绘制（SCadenceArcGraphCanvasPaint.cpp），按图层从下往上依次调用 ----
+	struct FPaintContext; // 一次 OnPaint 共用的几何、图层号、字体和画刷
+
+	// 分支聚焦：按"从已提交节点出发还要几步"分档
+	enum class EEdgeEmphasis : uint8 { Full, OnPath, OffPath };
+	int32 GetNodeDistance(int32 NodeIndex) const;
+	EEdgeEmphasis GetEdgeEmphasis(int32 EdgeIndex) const;
+
+	void PaintChainGroups(const FPaintContext& Paint) const;
+	void PaintEdges(const FPaintContext& Paint) const;
+	void PaintReferenceEnds(const FPaintContext& Paint, const FCadenceArcLayoutEdge& Edge, const FLinearColor& LineColor,
+	                        const FLinearColor& TextColor, float Thickness, float Progress) const;
+	void PaintHistoryFocusEdge(const FPaintContext& Paint) const;
+	void PaintNodes(const FPaintContext& Paint) const;
+	void PaintPorts(const FPaintContext& Paint) const;
+	// 返回用到的最高图层
+	int32 PaintHoverTooltip(const FPaintContext& Paint) const;
 
 	struct FCadenceArcGraphPalette
 	{

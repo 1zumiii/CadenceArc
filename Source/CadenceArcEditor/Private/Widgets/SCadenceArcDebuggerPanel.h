@@ -1,23 +1,24 @@
-﻿#pragma once
+#pragma once
 
 #include "CoreMinimal.h"
+#include "CadenceArcDebuggerSettings.h"
 #include "ViewModel/CadenceArcDebugView.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Input/SComboBox.h"
 
 
 class UCadenceArcResolver;
-class SCadenceArcGraphCanvas;
-class SCadenceArcChargeTimeline;
-class SScrollBox;
-class SCanvas;
+class SCadenceArcGraphView;
+class SCadenceArcRuntimeDetails;
+
 /**
- * 
+ * Arc Debugger 标签页：选择 PIE 里的 Resolver，每帧读取它的状态交给图视口和右侧运行时信息显示。
+ * 工具栏：Resolver 下拉框、刷新、跟随开关、布局选项菜单。
  */
 class SCadenceArcDebuggerPanel : public SCompoundWidget
 {
-	TSharedPtr<SCadenceArcGraphCanvas> Canvas;
-	TSharedPtr<SCadenceArcChargeTimeline> ChargeTimeline;
+	TSharedPtr<SCadenceArcGraphView> GraphView;
+	TSharedPtr<SCadenceArcRuntimeDetails> RuntimeDetails;
 
 	struct FResolverOption
 	{
@@ -35,45 +36,13 @@ class SCadenceArcDebuggerPanel : public SCompoundWidget
 
 	TSharedPtr<FActiveTimerHandle> RefreshTimerHandle;
 
-	// 视口跟随：已提交节点变化时把它滚进视口，其余时间不动用户手动滚到的位置
-	TSharedPtr<SScrollBox> HorizontalScroll;
-	TSharedPtr<SScrollBox> VerticalScroll;
-	bool bFollowCommittedNode = true;
-	int32 LastFollowedNodeIndex = INDEX_NONE;
-	int32 PendingFollowFrames = 0; // 换图后滚动区的内容尺寸下一帧才更新，跟随要连续做几帧
-
-	// 视口外去向提示：当前节点的直接后继完全不在视口内时，在边缘放一个可点击的提示
-	TSharedPtr<SCanvas> HintCanvas;
-	FString HintSignature; // 上一次提示的内容，没变就不重建按钮
+	// 布局选项，记在编辑器的个人项目配置里
+	FCadenceArcDebuggerSettings Settings;
+	void ApplySettings(bool bSave);
+	TSharedRef<SWidget> MakeLayoutMenu();
 
 	void StopRefreshTimer();
-	void FollowCommittedNode();
-	void RequestFollow();
-	void UpdateOffscreenHints();
-	void ScrollNodeIntoView(int32 NodeIndex);
-
-	// 手动浏览：画布把手势交给这里改滚动区和缩放
-	void PanBy(const FVector2D& ScreenDelta);
-	void ZoomAt(float WheelDelta, const FVector2D& CanvasLocal);
-
-	// 引用标记开关和跨列阈值，记在编辑器的个人项目配置里
-	bool bUseReferences = false;
-	int32 ReferenceMinSpan = 3;
-	void ApplyReferenceSetting(bool bSave);
-
-	bool bCompactChains = false;
-	void ApplyLayoutSetting(bool bSave);
-
-	// Arc History 点中的记录在图上的高亮
-	void ApplyHistoryFocus();
-	uint64 AppliedFocusSequence = 0;
 	void RefreshSelectedResolver();
-	FText GetStateText() const;
-	FText GetRequestText() const;
-	FText GetWindowText() const;
-	FText GetBufferedInputText() const;
-	FText GetHoldText() const;
-	EVisibility GetChargeVisibility() const;
 
 public:
 	SLATE_BEGIN_ARGS(SCadenceArcDebuggerPanel)

@@ -2,6 +2,10 @@
 
 CadenceArc is a tag-driven, execution-agnostic branching action framework for Unreal Engine 5.
 
+![Arc Debugger and Arc History during a PIE combo](Docs/Images/arc-debugger-overview.png)
+
+*The editor-only [runtime debugger](#runtime-debugger-phase-7) during a PIE combo. A fully charged Heavy release led to `OpenerC` (green), which has finished and is waiting for the next input; the three moves it can branch into next stay bright while the rest of the graph is dimmed. The middle column shows the resolver state and the last hold with its charge timeline, and Arc History on the right lists every resolver call with its time.*
+
 It resolves semantic input tags through a configurable action graph and emits action requests without knowing how those actions are executed.
 
 ```text
@@ -214,20 +218,35 @@ The optional `CadenceArcEditor` module (`Type=Editor`) adds two Nomad tabs under
 
 Select a PIE resolver (listed as `Actor @ World`) to see its graph and live state, refreshed every frame:
 
+![Arc Debugger while Heavy is held at Root](Docs/Images/arc-debugger-hold.png)
+
+*Heavy held at `Root` in the Sandbox tree graph. Both `Released` edges are preparatory (dashed, filled with charge progress), `OpenerC` has a dashed outline because a release right now would select it, and the timeline on the right shows press, charge start, full charge, and the automatic release cutoff.*
+
 - the committed node (green header), a candidate awaiting `Started` (yellow outline and edge), and details for state, request, window, buffered input, and hold;
 - **branch focus**: the committed node's outgoing edges stay bright, nodes still reachable from it stay normal, and nodes the current path can no longer reach (without reset or interruption) are dimmed;
 - **preparatory edges** while a hold is pending: its source node's `Released` edges for that tag are drawn dashed with a charge fill that advances along the curve, and the tier a release would select right now is emphasized. A charge timeline shows press, charge start, full charge, and the automatic release deadline;
 - **Follow**: when the committed node changes, the view zooms out when needed (down to 0.6x) and scrolls so that the node and its direct successors are visible. Successors that still do not fit get clickable hints at the view edge.
 - **Browsing**: right- or middle-drag pans, Ctrl + wheel zooms around the cursor (0.3x-2x); either turns Follow off until it is checked again. Hovering a node highlights its edges; hovering an edge highlights both ends and shows `Source → Target · condition`.
-- **References, span ≥ N** (off by default, remembered per user): edges whose source and target columns differ by at least N are not drawn as long lines. The source gets a small tag naming the target (`→ SkillF`, or `↩ Root` for a jump back), and the target gets a short entry stub. Click the tag to scroll to the target, or the stub to scroll back to the source. References does not change column assignment; these edges simply stop occupying channels and return lanes, and Follow only needs the tag, not the distant target, to be visible.
-- **Compact chains** (off by default, remembered per user): stacks simple chains vertically inside a subtle group outline, reducing the number of display columns while keeping every action and transition visible. For example, `Root → A → B → C → D` alongside `Root → E → D` uses three columns instead of five. Only runs of at least two reachable, non-entry nodes with exactly one incoming and one outgoing transition are grouped; branch/merge nodes and nodes touching a back edge stay outside. Parallel transitions and invalid targets also prevent those nodes from joining a chain. Graphs without suitable chains keep the original layout. Turn the option off to restore the layered layout; References remains independent and uses the selected layout's display columns.
+- The **Layout** menu holds the display options below. All of them are remembered per user and only change the drawing, never the asset.
+- **Right-angle edges** (on by default): forward edges use only horizontal and vertical segments with rounded corners. Vertical segments run in the gaps between columns, each on its own track, so no two edges share a vertical line; endpoints are the same as with smooth curves (the alternative when off).
+- **Reorder ports to reduce crossings** (on by default): each node lists its rows in the order their edges leave: forward edges top to bottom by where they arrive, then references and broken targets, then jumps back, then self loops. Only the display order changes; the transition order in the asset (and therefore resolution) is untouched.
+- **References for long edges** (off by default, minimum span N): edges whose source and target columns differ by at least N are not drawn as long lines. The source gets a small tag naming the target (`→ SkillF`, or `↩ Root` for a jump back), and the target gets a short entry stub. Click the tag to scroll to the target, or the stub to scroll back to the source. References does not change column assignment; these edges simply stop occupying channels and return lanes, and Follow only needs the tag, not the distant target, to be visible.
+- **Compact chains** (off by default): stacks simple chains vertically inside a subtle group outline, reducing the number of display columns while keeping every action and transition visible. For example, `Root → A → B → C → D` alongside `Root → E → D` uses three columns instead of five. Only runs of at least two reachable, non-entry nodes with exactly one incoming and one outgoing transition are grouped; branch/merge nodes and nodes touching a back edge stay outside. Parallel transitions and invalid targets also prevent those nodes from joining a chain. Graphs without suitable chains keep the original layout. Turn the option off to restore the layered layout; References remains independent and uses the selected layout's display columns.
 - Selecting a row in Arc History outlines its node and edge in violet and scrolls it into view.
 
-The default layout is a deterministic layered (Sugiyama-style) layout: DFS back edges close cycles and are routed as dashed lines through lanes below the graph; columns follow the longest path so forward edges always point right; long edges reserve a channel in every column they cross and are drawn as monotone curves that stay inside the free space between nodes. Compact chains uses the same outer layout with each chain treated as one indivisible item. Local chain edges turn through reserved gaps between their members and remain ordinary forward edges, not dashed back edges. This trades width for height; it does not regroup arbitrary branching regions or wrap the whole graph into rows. Both modes preserve node/transition indices, runtime highlights, history focus and the graph asset. The layout is rebuilt from the asset each frame.
+![Arc Debugger with branch focus after OpenerA to ChainA3](Docs/Images/arc-debugger-branch-focus.png)
+
+*After `OpenerA → ChainA3` (request #4, executing with the buffer window open): the committed node is green, its next steps stay bright, and branches the current path can no longer reach are dimmed. The hold that produced the request stays visible as "Last observed".*
+
+The default layout is a deterministic layered (Sugiyama-style) layout: DFS back edges close cycles and are routed as dashed lines through lanes below the graph; columns follow the longest path so forward edges always point right; long edges reserve a channel in every column they cross, and forward edges are drawn as right-angle routes or monotone curves that stay inside the free space between nodes. Compact chains uses the same outer layout with each chain treated as one indivisible item. Local chain edges turn through reserved gaps between their members and remain ordinary forward edges, not dashed back edges. This trades width for height; it does not regroup arbitrary branching regions or wrap the whole graph into rows. Both modes preserve node/transition indices, runtime highlights, history focus and the graph asset. The layout is rebuilt from the asset each frame.
 
 ### Arc History
 
 Arc History follows the resolver selected in Arc Debugger and lists its calls newest first. Successful calls show one line (for example `Light P at Root → SkillA (request #5)` or `SkillA finished`); failed calls are marked red with a plain-language reason followed by the enum name (for example `No transition for Heavy P from SkillD (NoMatchingTransition)`). **Failures only** filters the list, and **Clear** hides existing rows without stopping recording.
+
+![Arc History of the same PIE session](Docs/Images/arc-history.png)
+
+*The same session, newest first. Times prefixed with `~` are borrowed from the most recent host call (see below); row #15 is a refused hold at `ChainC1`, with its reason underneath.*
 
 Recording contract:
 
@@ -319,6 +338,7 @@ CadenceArc/
 |-- CadenceArc.uplugin
 |-- Config/
 |-- Content/
+|-- Docs/Images/                 README screenshots
 |-- Resources/
 `-- Source/
     |-- CadenceArc/              runtime module
@@ -336,9 +356,9 @@ CadenceArc/
         |-- CadenceArcEditor.Build.cs
         |-- Public/
         `-- Private/
-            |-- Layout/          pure graph layout and follow math
+            |-- Layout/          pure graph layout (one file per stage), viewport math, hit testing
             |-- ViewModel/       pure debug view, history text, shared selection
-            |-- Widgets/         Slate panels and canvas
+            |-- Widgets/         Slate panels: debugger panel, graph view, canvas (state / paint / drawing helpers), runtime details, history
             `-- Tests/
 ```
 
@@ -363,7 +383,12 @@ Tests live under `Source/CadenceArc/Private/Tests/` and build graphs in memory, 
 
 Editor-module tests live under `Source/CadenceArcEditor/Private/Tests/`:
 
-- `CadenceArcGraphLayoutTests.cpp` -- layering, back edges, return lanes, barycenter ordering, and geometry of the actual drawn paths (no path crosses an unrelated node, entries land on the target title, columns never overlap), compact-chain grouping and eligibility, stable identities and deterministic mode switching, reference tags and entry stubs, plus follow zoom, follow scrolling, off-screen hints, and hit testing;
+- `CadenceArcGraphLayoutTests.cpp` -- layering, back edges, return lanes, barycenter ordering, unreachable nodes, broken targets, and determinism;
+- `CadenceArcLayoutGeometryTests.cpp` -- geometry of the actual drawn paths (no path crosses an unrelated node, entries land on the target title, columns never overlap), long-edge channels, reference tags and entry stubs;
+- `CadenceArcLayoutCompactChainTests.cpp` -- compact-chain grouping and eligibility, stable identities, and deterministic mode switching;
+- `CadenceArcLayoutRoutingTests.cpp` -- right-angle edges (same endpoints, axis-aligned segments, no shared vertical tracks) and port reordering (permutation, grouping, fewer crossings);
+- `CadenceArcViewportMathTests.cpp` -- follow zoom, follow scrolling, off-screen hints, and hit testing;
+- `CadenceArcLayoutTestSupport.h/.cpp` -- shared graph builders and geometry assertions for the layout tests;
 - `CadenceArcDebugViewTests.cpp` -- the live view model: committed and candidate mapping, parallel edges, preparatory edges and charge progress, branch distances, and read-only behavior;
 - `CadenceArcDebugEventTextTests.cpp` -- the Arc History text shown for successful and failed calls.
 
