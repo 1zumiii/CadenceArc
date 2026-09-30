@@ -5,9 +5,17 @@
 
 class UCadenceArcGraph;
 
+// 只改变编辑器几何，不改变图的动作、Transition 或运行状态。
+enum class ECadenceArcLayoutMode : uint8
+{
+	Layered, // 原有分层布局：前向边严格向右推进。
+	CompactChains // 将无分叉、无额外汇入的简单链纵向展开，整体仍按分层图排列。
+};
+
 // 布局的全部几何参数。画布把同一份参数交给布局并用它绘制节点内部的行，节点尺寸只由布局计算。
 struct FCadenceArcLayoutParams
 {
+	ECadenceArcLayoutMode Mode = ECadenceArcLayoutMode::Layered;
 	// 引用标记：列号相差不小于它的边不画长线，改为源端口旁的一个小标记（写着目标名）加目标左侧的一小段接入线。
 	// 列号和行序的含义不变，只是这些边不再占用中间列的通道或底部通道。0 表示关闭。
 	int32 ReferenceMinSpan = 0;
@@ -38,7 +46,7 @@ struct FCadenceArcLayoutNode
 {
 	int32 NodeIndex = INDEX_NONE; // 对应 Graph->Nodes 的数组索引
 	FGameplayTag ActionTag;
-	int32 Column = 0; // 去掉回边后，从入口出发的最长路径长度；不可达节点放在最后一列
+	int32 Column = 0; // 分层模式为最长路径深度；紧凑模式为收缩简单链后的显示列，链内节点同列。
 	int32 Row = 0; // 同一列真实节点中的顺序（不计长边通道），按重心法减少交叉
 	bool bReachable = false;
 	int32 NumPorts = 0; // 出边数，决定节点高度
@@ -54,7 +62,7 @@ struct FCadenceArcLayoutEdge
 	FCadenceArcTransition Transition; // 构建时从 Transition 复制，下游匹配边时不必再按下标读活资产
 	// 从入口深度优先遍历时指向当前递归路径上节点的边（含自环）。它闭合一个环，不参与列号计算。
 	bool bIsBackEdge = false;
-	// 目标列不在源列右侧的非自环边，从所有节点下方的通道绕回；值为通道序号，从上往下数。
+	// 非局部链内边、非自环且目标不在右列时，从底部通道绕回；链内转向不等于拓扑回边。
 	int32 ReturnLane = INDEX_NONE;
 	// 实际绘制的折线：第一个点是源节点的端口，最后一个点是目标标题行左侧的接入点（坏目标为短线末端）。
 	// 引用边只有从端口到标记左边缘的一小段。
@@ -66,10 +74,18 @@ struct FCadenceArcLayoutEdge
 	bool IsBrokenTarget() const { return TargetNodeIndex == INDEX_NONE; }
 };
 
+// 只用于布局与显示的分组；成员仍然存在于 Nodes 中，边仍是一条 Transition 对应一项。
+struct FCadenceArcLayoutChain
+{
+	TArray<int32> NodeIndices; // 按链的执行顺序排列，不依赖资产中的节点数组顺序。
+	FBox2D Bounds = FBox2D(ForceInit); // 包含成员、局部连线及分组留白。
+};
+
 struct FCadenceArcGraphLayout
 {
 	TArray<FCadenceArcLayoutNode> Nodes; // 与 Graph->Nodes 一一对应、顺序相同
 	TArray<FCadenceArcLayoutEdge> Edges; // 每条 Transition 一项，按节点顺序、Transition 顺序排列
+	TArray<FCadenceArcLayoutChain> FoldedChains; // 分层模式或没有合适的简单链时为空。
 	int32 NumColumns = 0;
 	int32 MaxRows = 0;
 	int32 NumReturnLanes = 0;

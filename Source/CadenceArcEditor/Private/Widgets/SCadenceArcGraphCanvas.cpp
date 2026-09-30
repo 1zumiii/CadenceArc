@@ -193,9 +193,23 @@ void SCadenceArcGraphCanvas::SetDebugView(const FCadenceArcDebugView& InDebugVie
 
 void SCadenceArcGraphCanvas::SetGraph(const UCadenceArcGraph* InGraph)
 {
+	const bool bGraphChanged = Graph.Get() != InGraph;
 	DebugView = FCadenceArcDebugView();
 	Graph = InGraph;
-	Layout = InGraph ? BuildGraphLayout(*InGraph, Params) : FCadenceArcGraphLayout{};
+	RebuildGeometry(bGraphChanged);
+}
+
+void SCadenceArcGraphCanvas::RebuildGeometry(const bool bResetHover)
+{
+	const UCadenceArcGraph* CurrentGraph = Graph.Get();
+	Layout = CurrentGraph ? BuildGraphLayout(*CurrentGraph, Params) : FCadenceArcGraphLayout{};
+	// 换布局后丢弃旧位置的悬停；同一张图的定时刷新则保留，避免提示不断闪烁。
+	if (bResetHover)
+	{
+		HoveredNode = INDEX_NONE;
+		HoveredEdge = INDEX_NONE;
+		HoverPoint = FVector2D::ZeroVector;
+	}
 
 	EdgeLabels.Reset(Layout.Edges.Num());
 	for (const FCadenceArcLayoutEdge& Edge : Layout.Edges)
@@ -254,16 +268,28 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 	// 所有绘制都用布局坐标；缩放放在这层子几何上，文字、线宽和节点一起按比例缩放
 	const FGeometry Geometry = AllottedGeometry.MakeChild(Layout.Size, FSlateLayoutTransform(Zoom));
 
-	const int32 EdgeLayer = LayerId; // 最底层：连线
-	const int32 BodyLayer = LayerId + 1; // 节点主体
-	const int32 HeaderLayer = LayerId + 2; // 标题行底色、端口圆点
-	const int32 OutlineLayer = LayerId + 3; //高亮描边层
-	const int32 TextLayer = LayerId + 4; // 最上层：文字
+	const int32 GroupLayer = LayerId; // 最底层：紧凑链的分组边框
+	const int32 EdgeLayer = LayerId + 1; // 连线
+	const int32 BodyLayer = LayerId + 2; // 节点主体
+	const int32 HeaderLayer = LayerId + 3; // 标题行底色、端口圆点
+	const int32 OutlineLayer = LayerId + 4; //高亮描边层
+	const int32 TextLayer = LayerId + 5; // 最上层：文字
 	const FSlateFontInfo HeaderFont = FCoreStyle::GetDefaultFontStyle("Bold", 9);
 	const FSlateFontInfo PortFont = FCoreStyle::GetDefaultFontStyle("Regular", 8);
 	const FSlateBrush* WhiteBrush = FAppStyle::GetBrush("WhiteBrush"); // 纯白画刷，靠 Tint 着色
 	const FPaintGeometry CanvasGeometry = Geometry.ToPaintGeometry(); // 整块画布，点坐标用局部坐标
 	const FCadenceArcGraphPalette Palette;
+
+	// 分组只标明纵向折叠关系，不参与命中或扩大画布；连线和运行时高亮仍在它上方。
+	for (const FCadenceArcLayoutChain& Chain : Layout.FoldedChains)
+	{
+		if (Chain.Bounds.bIsValid)
+		{
+			FSlateDrawElement::MakeLines(
+				OutDrawElements, GroupLayer, CanvasGeometry, BoxOutline(Chain.Bounds),
+				ESlateDrawEffect::None, FLinearColor(0.38f, 0.38f, 0.42f, 0.45f), true, 1.f);
+		}
+	}
 
 	// 分支聚焦：按"从已提交节点出发还要几步"分档。
 	// 已提交节点的出边（下一步）、候选边、预备边不淡化；源节点还能走到的边中等；
@@ -597,13 +623,17 @@ void SCadenceArcGraphCanvas::SetReferenceMinSpan(const int32 MinSpan)
 		return;
 	}
 	Params.ReferenceMinSpan = MinSpan;
-	if (const UCadenceArcGraph* CurrentGraph = Graph.Get())
+	RebuildGeometry();
+}
+
+void SCadenceArcGraphCanvas::SetLayoutMode(const ECadenceArcLayoutMode InMode)
+{
+	if (InMode == Params.Mode)
 	{
-		// SetGraph 会清空调试状态；节点和边的索引不随参数变化，原样放回
-		const FCadenceArcDebugView View = DebugView;
-		SetGraph(CurrentGraph);
-		DebugView = View;
+		return;
 	}
+	Params.Mode = InMode;
+	RebuildGeometry();
 }
 
 FReply SCadenceArcGraphCanvas::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)

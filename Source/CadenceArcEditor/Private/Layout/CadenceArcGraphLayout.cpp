@@ -9,6 +9,8 @@
 // 4. 纵坐标按连线的端口位置双向对齐，每列保持顺序和最小间距（保序回归），通道同样占高度；
 // 5. 目标列不在源列右侧的边分配底部通道；最后生成每条边的实际绘制折线。
 // 打开引用标记（ReferenceMinSpan）时，跨列多的边在第 2 步之后改成引用：不占通道、不参与排序，只画两端的短标记。
+// CompactChains 在分层前把简单链收成一个格子，链内成员纵向展开；外部沿用同一排序与走线算法。
+// 因此紧凑模式的 Column 表示显示列，链内前进允许同列，不能再仅凭几何方向判定回边。
 // 路径合法性来自结构：穿过中间列时是通道里的水平线，换高度的 S 曲线只出现在两列之间的空隙里，
 // 回边和自环的竖线也只在空隙里，所以线不会压在无关节点上。
 namespace
@@ -58,10 +60,57 @@ namespace
 			&& Nodes[Edge.SourceNodeIndex].bReachable && Nodes[Edge.TargetNodeIndex].bReachable;
 	}
 
+	// 按真实入/出边计数，而不是去重后的邻居数：平行条件、坏目标、不可达来源都不能被悄悄藏进链。
+	// 分组只接收一进一出的中间节点；入口、分叉、汇合及接触 DFS 回边的节点保留在外层。
+	void FindCompactChains(FCadenceArcGraphLayout& Layout, const int32 EntryIndex)
+	{
+		TArray<TArray<int32>> Incoming;
+		TArray<TArray<int32>> Outgoing;
+		Incoming.SetNum(Layout.Nodes.Num());
+		Outgoing.SetNum(Layout.Nodes.Num());
+		for (int32 Index = 0; Index < Layout.Edges.Num(); ++Index)
+		{
+			const FCadenceArcLayoutEdge& Edge = Layout.Edges[Index];
+			Outgoing[Edge.SourceNodeIndex].Add(Index);
+			if (!Edge.IsBrokenTarget())
+			{
+				Incoming[Edge.TargetNodeIndex].Add(Index);
+			}
+		}
+		TArray<bool> Eligible;
+		Eligible.Init(false, Layout.Nodes.Num());
+		for (int32 Index = 0; Index < Layout.Nodes.Num(); ++Index)
+		{
+			Eligible[Index] = Index != EntryIndex && Layout.Nodes[Index].bReachable
+				&& Incoming[Index].Num() == 1 && Outgoing[Index].Num() == 1
+				&& IsForwardEdge(Layout.Edges[Incoming[Index][0]], Layout.Nodes)
+				&& IsForwardEdge(Layout.Edges[Outgoing[Index][0]], Layout.Nodes);
+		}
+		for (int32 Index = 0; Index < Layout.Nodes.Num(); ++Index)
+		{
+			if (!Eligible[Index] || Eligible[Layout.Edges[Incoming[Index][0]].SourceNodeIndex])
+			{
+				continue; // 只从每段最大简单链的头部收集，数组次序不必等于执行次序。
+			}
+			FCadenceArcLayoutChain Chain;
+			int32 Next = Index;
+			while (Eligible[Next])
+			{
+				Chain.NodeIndices.Add(Next);
+				Next = Layout.Edges[Outgoing[Next][0]].TargetNodeIndex;
+			}
+			if (Chain.NodeIndices.Num() >= 2)
+			{
+				Layout.FoldedChains.Add(MoveTemp(Chain));
+			}
+		}
+	}
+
 	// 分层后的一个格子：可达的真实节点，或长边在中间列的通道
 	struct FLayerItem
 	{
 		int32 NodeIndex = INDEX_NONE; // 通道为 INDEX_NONE
+		TArray<int32> Members; // 普通格子只有一个成员；紧凑链作为一个整体参与排序和保序回归。
 		int32 EdgeIndex = INDEX_NONE; // 通道所属的边
 		int32 Column = 0;
 		double Height = 0.0;
@@ -311,7 +360,38 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 		Node.bReachable = State.Visit[Node.NodeIndex] != 0;
 	}
 
-	// 2. 最长路径列号：逆后序就是去掉回边后的拓扑序，前驱一定先于后继处理
+	if (Params.Mode == ECadenceArcLayoutMode::CompactChains)
+	{
+		const int32* Entry = NodeIndexMap.Find(Graph.EntryActionTag);
+		FindCompactChains(Layout, Entry ? *Entry : INDEX_NONE);
+	}
+	TArray<int32> ChainOfNode;
+	ChainOfNode.Init(INDEX_NONE, NumNodes);
+	TArray<double> NodeOffset;
+	NodeOffset.Init(0.0, NumNodes);
+	// 内部的横线从相邻节点的间隙经过，圆角与最粗的高亮线也需要空间。
+	const double ChainGap = FMath::Max(static_cast<double>(Params.NodeGap),
+		2.0 * (Params.CornerRadius + Params.ChannelGap + Params.ChannelHeight * 0.5));
+	const double ChainStub = FMath::Max(static_cast<double>(Params.ReturnStub),
+		Params.CornerRadius + Params.ChannelGap + Params.ChannelHeight * 0.5);
+	for (int32 ChainIndex = 0; ChainIndex < Layout.FoldedChains.Num(); ++ChainIndex)
+	{
+		double Offset = 0.0;
+		for (const int32 Member : Layout.FoldedChains[ChainIndex].NodeIndices)
+		{
+			ChainOfNode[Member] = ChainIndex;
+			NodeOffset[Member] = Offset;
+			Offset += Layout.Nodes[Member].Size.Y + ChainGap;
+		}
+	}
+	const auto IsChainEdge = [&ChainOfNode](const FCadenceArcLayoutEdge& Edge)
+	{
+		return !Edge.IsBrokenTarget() && ChainOfNode[Edge.SourceNodeIndex] != INDEX_NONE
+			&& ChainOfNode[Edge.SourceNodeIndex] == ChainOfNode[Edge.TargetNodeIndex];
+	};
+
+	// 2. 最长路径列号：链内边长度为 0（共享一列），其余前向边长度为 1。
+	// 逆后序仍是原图去掉回边后的拓扑序；分层模式没有分组，保留原有列号。
 	TArray<TArray<int32>> NodePredecessors;
 	NodePredecessors.SetNum(NumNodes);
 	for (const FCadenceArcLayoutEdge& Edge : Layout.Edges)
@@ -327,7 +407,9 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 		FCadenceArcLayoutNode& Node = Layout.Nodes[State.PostOrder[Index]];
 		for (const int32 Predecessor : NodePredecessors[Node.NodeIndex])
 		{
-			Node.Column = FMath::Max(Node.Column, Layout.Nodes[Predecessor].Column + 1);
+			const bool bSameChain = ChainOfNode[Node.NodeIndex] != INDEX_NONE
+				&& ChainOfNode[Node.NodeIndex] == ChainOfNode[Predecessor];
+			Node.Column = FMath::Max(Node.Column, Layout.Nodes[Predecessor].Column + (bSameChain ? 0 : 1));
 		}
 		NumReachableColumns = FMath::Max(NumReachableColumns, Node.Column + 1);
 	}
@@ -354,13 +436,19 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 	ItemOfNode.Init(INDEX_NONE, NumNodes);
 	for (const FCadenceArcLayoutNode& Node : Layout.Nodes)
 	{
-		if (Node.bReachable)
+		if (Node.bReachable && ItemOfNode[Node.NodeIndex] == INDEX_NONE)
 		{
 			FLayerItem Item;
-			Item.NodeIndex = Node.NodeIndex;
+			Item.Members = ChainOfNode[Node.NodeIndex] == INDEX_NONE
+				? TArray<int32>{Node.NodeIndex} : Layout.FoldedChains[ChainOfNode[Node.NodeIndex]].NodeIndices;
+			Item.NodeIndex = Item.Members[0];
 			Item.Column = Node.Column;
-			Item.Height = Node.Size.Y;
-			ItemOfNode[Node.NodeIndex] = Items.Add(Item);
+			Item.Height = NodeOffset[Item.Members.Last()] + Layout.Nodes[Item.Members.Last()].Size.Y;
+			for (const int32 Member : Item.Members)
+			{
+				ItemOfNode[Member] = Items.Num();
+			}
+			Items.Add(MoveTemp(Item));
 		}
 	}
 	TArray<TArray<int32>> EdgeChannels; // 每条前向边依次经过的通道
@@ -374,12 +462,13 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 		{
 			Items[ItemOfNode[Edge.SourceNodeIndex]].bHasSelfLoop = true;
 		}
-		if (!IsForwardEdge(Edge, Layout.Nodes) || Edge.bIsReference)
+		if (!IsForwardEdge(Edge, Layout.Nodes) || Edge.bIsReference || IsChainEdge(Edge))
 		{
 			continue;
 		}
 		int32 Previous = ItemOfNode[Edge.SourceNodeIndex];
-		double PreviousOffset = Params.HeaderHeight + (Edge.TransitionIndex + 0.5) * Params.PortHeight;
+		double PreviousOffset = NodeOffset[Edge.SourceNodeIndex]
+			+ Params.HeaderHeight + (Edge.TransitionIndex + 0.5) * Params.PortHeight;
 		const int32 TargetColumn = Layout.Nodes[Edge.TargetNodeIndex].Column;
 		for (int32 Column = Layout.Nodes[Edge.SourceNodeIndex].Column + 1; Column < TargetColumn; ++Column)
 		{
@@ -393,7 +482,8 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 			Previous = ChannelItem;
 			PreviousOffset = Params.ChannelHeight * 0.5;
 		}
-		Links.Add({Previous, ItemOfNode[Edge.TargetNodeIndex], PreviousOffset, Params.HeaderHeight * 0.5});
+		Links.Add({Previous, ItemOfNode[Edge.TargetNodeIndex], PreviousOffset,
+			NodeOffset[Edge.TargetNodeIndex] + Params.HeaderHeight * 0.5});
 	}
 	TArray<TArray<int32>> IncomingLinks;
 	TArray<TArray<int32>> OutgoingLinks;
@@ -455,7 +545,10 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 		{
 			if (!Items[Item].IsChannel())
 			{
-				Layout.Nodes[Items[Item].NodeIndex].Row = Row++;
+				for (const int32 Member : Items[Item].Members)
+				{
+					Layout.Nodes[Member].Row = Row++;
+				}
 			}
 		}
 		Layout.MaxRows = FMath::Max(Layout.MaxRows, Row);
@@ -512,7 +605,10 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 		Item.Y += ShiftY;
 		if (!Item.IsChannel())
 		{
-			Layout.Nodes[Item.NodeIndex].Position = FVector2D(ColumnX(Item.Column), Item.Y);
+			for (const int32 Member : Item.Members)
+			{
+				Layout.Nodes[Member].Position = FVector2D(ColumnX(Item.Column), Item.Y + NodeOffset[Member]);
+			}
 		}
 	}
 
@@ -574,6 +670,7 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 	{
 		const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
 		if (Edge.TargetNodeIndex != INDEX_NONE && Edge.TargetNodeIndex != Edge.SourceNodeIndex && !Edge.bIsReference
+			&& !IsChainEdge(Edge)
 			&& Layout.Nodes[Edge.TargetNodeIndex].Column <= Layout.Nodes[Edge.SourceNodeIndex].Column)
 		{
 			ReturnEdges.Add(EdgeIndex);
@@ -695,6 +792,17 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 			continue;
 		}
 		const FCadenceArcLayoutNode& Source = Layout.Nodes[Edge.SourceNodeIndex];
+		if (IsChainEdge(Edge))
+		{
+			// 同列的局部前进，不是回边：右侧下降到成员间的专用空隙，横穿空隙，再从左侧接入下一成员。
+			// 整个链是排序阶段不可拆开的格子，因此这里不会混入其他节点或长边通道。
+			const FCadenceArcLayoutNode& Target = Layout.Nodes[Edge.TargetNodeIndex];
+			const double GapY = (Source.Position.Y + Source.Size.Y + Target.Position.Y) * 0.5;
+			Edge.Path = RoundCorners({Start, FVector2D(Start.X + ChainStub, Start.Y),
+				FVector2D(Start.X + ChainStub, GapY), FVector2D(End.X - ChainStub, GapY),
+				FVector2D(End.X - ChainStub, End.Y), End}, Params.CornerRadius);
+			continue;
+		}
 		if (Edge.SourceNodeIndex == Edge.TargetNodeIndex)
 		{
 			// 自环：从端口向右出去，绕过节点底部，从左侧回到自己的标题行
@@ -767,6 +875,19 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 	Layout.Size = FVector2D(
 		ColumnX(Layout.NumColumns - 1) + Params.NodeWidth + RightMargin + Params.Padding,
 		FMath::Max(ContentBottom, ReturnBottom) + Params.Padding);
+	for (FCadenceArcLayoutChain& Chain : Layout.FoldedChains)
+	{
+		for (const int32 Member : Chain.NodeIndices)
+		{
+			Chain.Bounds += Layout.Nodes[Member].Position;
+			Chain.Bounds += Layout.Nodes[Member].Position + Layout.Nodes[Member].Size;
+		}
+		// 横向包含局部绕线；纵向只添加分组轮廓留白，不能侵占相邻格子的通道。
+		Chain.Bounds = FBox2D(Chain.Bounds.Min - FVector2D(ChainStub + 4.0, 4.0),
+			Chain.Bounds.Max + FVector2D(ChainStub + 4.0, 4.0));
+		Layout.Size.X = FMath::Max(Layout.Size.X, Chain.Bounds.Max.X + Params.Padding);
+		Layout.Size.Y = FMath::Max(Layout.Size.Y, Chain.Bounds.Max.Y + Params.Padding);
+	}
 	return Layout;
 }
 

@@ -58,6 +58,10 @@ public:
 	void SetReferenceMinSpan(int32 MinSpan);
 	int32 GetReferenceMinSpan() const { return Params.ReferenceMinSpan; }
 
+	// 只改变几何布局；运行时状态、历史焦点和当前缩放不变。
+	void SetLayoutMode(ECadenceArcLayoutMode InMode);
+	ECadenceArcLayoutMode GetLayoutMode() const { return Params.Mode; }
+
 	// 左键点引用标记跳到目标、点目标一侧的接入线跳回源节点；滚动区在面板里，画布只报告要看哪个节点
 	void SetNavigateHandler(TFunction<void(int32 NodeIndex)> InOnNavigate) { OnNavigate = MoveTemp(InOnNavigate); }
 
@@ -76,6 +80,8 @@ public:
 		bool bParentEnabled) const override;
 
 private:
+	void RebuildGeometry(bool bResetHover = true);
+
 	struct FCadenceArcGraphPalette
 	{
 		FLinearColor NormalNodeFill = FLinearColor(0.25f, 0.25f, 0.25f);

@@ -61,6 +61,9 @@ class SCadenceArcDebuggerPanel : public SCompoundWidget
 	int32 ReferenceMinSpan = 3;
 	void ApplyReferenceSetting(bool bSave);
 
+	bool bCompactChains = false;
+	void ApplyLayoutSetting(bool bSave);
+
 	// Arc History 点中的记录在图上的高亮
 	void ApplyHistoryFocus();
 	uint64 AppliedFocusSequence = 0;

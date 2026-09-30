@@ -207,6 +207,26 @@ void SCadenceArcDebuggerPanel::Construct(const FArguments& InArgs)
 						})
 					]
 				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(16.f, 0.f, 0.f, 0.f)
+				[
+					SNew(SCheckBox)
+					.IsChecked_Lambda([this]()
+					{
+						return bCompactChains ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+					})
+					.OnCheckStateChanged_Lambda([this](const ECheckBoxState NewState)
+					{
+						bCompactChains = NewState == ECheckBoxState::Checked;
+						ApplyLayoutSetting(true);
+					})
+					.ToolTipText(FText::FromString(TEXT("Arrange simple chains vertically in one column to reduce graph width. Branches and merges remain connected to the same nodes. Has no effect when no simple chains can be compacted.")))
+					[
+						SNew(STextBlock).Text(FText::FromString(TEXT("Compact chains")))
+					]
+				]
 			]
 		]
 		+ SVerticalBox::Slot()
@@ -320,8 +340,10 @@ void SCadenceArcDebuggerPanel::Construct(const FArguments& InArgs)
 	Canvas->SetNavigateHandler([this](const int32 NodeIndex) { ScrollNodeIntoView(NodeIndex); });
 	GConfig->GetBool(ConfigSection, TEXT("bUseReferences"), bUseReferences, GEditorPerProjectIni);
 	GConfig->GetInt(ConfigSection, TEXT("ReferenceMinSpan"), ReferenceMinSpan, GEditorPerProjectIni);
+	GConfig->GetBool(ConfigSection, TEXT("bCompactChains"), bCompactChains, GEditorPerProjectIni);
 	ReferenceMinSpan = FMath::Clamp(ReferenceMinSpan, 2, 9);
 	ApplyReferenceSetting(false);
+	ApplyLayoutSetting(false);
 
 	EndPIEHandle = FEditorDelegates::EndPIE.AddSP(
 		this, &SCadenceArcDebuggerPanel::OnEndPIE
@@ -407,6 +429,17 @@ void SCadenceArcDebuggerPanel::ApplyReferenceSetting(const bool bSave)
 	{
 		GConfig->SetBool(ConfigSection, TEXT("bUseReferences"), bUseReferences, GEditorPerProjectIni);
 		GConfig->SetInt(ConfigSection, TEXT("ReferenceMinSpan"), ReferenceMinSpan, GEditorPerProjectIni);
+	}
+}
+
+void SCadenceArcDebuggerPanel::ApplyLayoutSetting(const bool bSave)
+{
+	Canvas->SetLayoutMode(bCompactChains ? ECadenceArcLayoutMode::CompactChains : ECadenceArcLayoutMode::Layered);
+	RequestFollow();
+	HintSignature.Reset();
+	if (bSave)
+	{
+		GConfig->SetBool(ConfigSection, TEXT("bCompactChains"), bCompactChains, GEditorPerProjectIni);
 	}
 }
 
