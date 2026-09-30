@@ -1,5 +1,7 @@
 # CadenceArc
 
+English | [简体中文](README.zh-CN.md)
+
 CadenceArc is a tag-driven, execution-agnostic branching action framework for Unreal Engine 5.
 
 ![Arc Debugger and Arc History during a PIE combo](Docs/Images/arc-debugger-overview.png)
