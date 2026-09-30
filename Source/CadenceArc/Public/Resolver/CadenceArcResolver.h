@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "CadenceArcResolverTypes.h"
+#include "CadenceArcDebugHistory.h"
 #include "GameplayTagContainer.h"
 #include "Graph/CadenceArcGraphTypes.h"
 #include "UObject/Object.h"
@@ -128,6 +129,29 @@ private:
 	void ResetBufferWindow();
 	void CheckSlotInvariants() const;
 
+	// 公开操作的实际实现。公开函数只做一件事：调用对应的 Impl，并在编辑器构建中于返回前记录一条调试历史；
+	// 业务逻辑全部在 Impl 里，记录不参与也不改变任何结果。Impl 之间不互相调用公开函数，避免重复记录。
+	ECadenceArcResolverInitResult InitializeImpl(UCadenceArcGraph* InGraph);
+	FCadenceArcSubmitOutcome SubmitInputImpl(const FCadenceArcInputEvent& InInputEvent);
+	ECadenceArcResolverResetResult ResetImpl();
+	ECadenceArcHandshakeResult NotifyActionStartedImpl(int64 InRequestId);
+	ECadenceArcHandshakeResult NotifyActionRejectedImpl(int64 InRequestId);
+	FCadenceArcActionCompletionOutcome NotifyActionCompletedImpl(int64 InRequestId, double CompletionTimestampSeconds);
+	ECadenceArcHandshakeResult NotifyActionCancelledImpl(int64 InRequestId);
+	ECadenceArcHandshakeResult NotifyActionInterruptedImpl(int64 InRequestId);
+	FCadenceArcInputAdvanceOutcome ReleaseInputHoldImpl(
+		const FCadenceArcInputToken& Token, const FCadenceArcInputEvent& ReleaseEvent);
+	FCadenceArcHoldOutcome BeginInputHoldImpl(const FCadenceArcInputToken& Token, const FCadenceArcInputEvent& PressEvent);
+	FCadenceArcInputAdvanceOutcome AdvanceInputTimeImpl(double NowSeconds);
+	FCadenceArcHoldOutcome CancelInputHoldImpl(const FCadenceArcInputToken& Token);
+
+#if WITH_EDITOR
+	// 调试历史只在编辑器构建中存在；不是 UPROPERTY，只保存值，不参与序列化和 GC
+	FCadenceArcDebugHistory DebugHistory;
+	FCadenceArcDebugEvent BeginDebugRecord(ECadenceArcDebugOperation Operation) const;
+	void EndDebugRecord(FCadenceArcDebugEvent& Record);
+#endif
+
 public:
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	ECadenceArcResolverInitResult Initialize(UCadenceArcGraph* InGraph);
@@ -209,4 +233,9 @@ public:
 	
 	// 可视化调试的只读查询接口
 	const UCadenceArcGraph* GetGraph() const { return Graph; }
+
+#if WITH_EDITOR
+	// 调试历史：编辑器面板按序号拉取，读取只复制，不改变任何状态
+	const FCadenceArcDebugHistory& GetDebugHistory() const { return DebugHistory; }
+#endif
 };

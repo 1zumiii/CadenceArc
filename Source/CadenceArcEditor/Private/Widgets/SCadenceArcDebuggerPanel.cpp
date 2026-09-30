@@ -9,6 +9,7 @@
 #include "Graph/CadenceArcGraph.h"
 #include "Resolver/CadenceArcResolver.h"
 #include "Styling/CoreStyle.h"
+#include "ViewModel/CadenceArcDebuggerSelection.h"
 #include "UObject/UObjectIterator.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -272,6 +273,7 @@ END_SLATE_FUNCTION_BUILD_OPTIMIZATION
 SCadenceArcDebuggerPanel::~SCadenceArcDebuggerPanel()
 {
 	StopRefreshTimer();
+	CadenceArc::Editor::DebuggerSelection::Clear();
 	if (EndPIEHandle.IsValid())
 	{
 		FEditorDelegates::EndPIE.Remove(EndPIEHandle);
@@ -649,6 +651,7 @@ EActiveTimerReturnType SCadenceArcDebuggerPanel::OnRefreshTick(double X, float A
 	if (!SelectedResolver.IsValid() || !SelectedResolver->IsInitialized())
 	{
 		SelectedResolver.Reset();
+		CadenceArc::Editor::DebuggerSelection::Clear();
 		RefreshSelectedResolver();
 		RefreshTimerHandle.Reset();
 		return EActiveTimerReturnType::Stop;
@@ -662,6 +665,9 @@ void SCadenceArcDebuggerPanel::OnResolverSelected(TSharedPtr<FResolverOption> Re
 	StopRefreshTimer();
 	const UCadenceArcResolver* PreviousResolver = SelectedResolver.Get();
 	SelectedResolver = ResolverOption.IsValid() ? ResolverOption->Resolver : nullptr;
+	// Arc History 跟随这里的选择
+	CadenceArc::Editor::DebuggerSelection::Set(
+		SelectedResolver.Get(), ResolverOption.IsValid() ? ResolverOption->Label : FString());
 	if (SelectedResolver.Get() != PreviousResolver)
 	{
 		DisplayedHoldSnapshot = FCadenceArcHoldSnapshot{};
@@ -684,6 +690,7 @@ void SCadenceArcDebuggerPanel::OnResolverSelected(TSharedPtr<FResolverOption> Re
 void SCadenceArcDebuggerPanel::OnEndPIE(bool bArg)
 {
 	StopRefreshTimer();
+	CadenceArc::Editor::DebuggerSelection::Clear();
 	Options.Reset();
 	ResolverCombo->RefreshOptions();
 	ResolverCombo->ClearSelection();

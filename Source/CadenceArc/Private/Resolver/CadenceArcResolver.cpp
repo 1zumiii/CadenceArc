@@ -27,7 +27,7 @@ namespace
 	}
 }
 
-ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* InGraph)
+ECadenceArcResolverInitResult UCadenceArcResolver::InitializeImpl(UCadenceArcGraph* InGraph)
 {
 	if (State == ECadenceArcResolverState::AwaitingStart || State == ECadenceArcResolverState::Executing)
 	{
@@ -66,7 +66,7 @@ ECadenceArcResolverInitResult UCadenceArcResolver::Initialize(UCadenceArcGraph* 
 	return ECadenceArcResolverInitResult::Success;
 }
 
-FCadenceArcSubmitOutcome UCadenceArcResolver::SubmitInput(const FCadenceArcInputEvent& InInputEvent)
+FCadenceArcSubmitOutcome UCadenceArcResolver::SubmitInputImpl(const FCadenceArcInputEvent& InInputEvent)
 {
 	FCadenceArcSubmitOutcome Outcome;
 	Outcome.SetRejected(ECadenceArcResolutionReason::NotInitialized); // 悲观默认值,每条分支都会覆盖它
@@ -318,7 +318,7 @@ void UCadenceArcResolver::CheckSlotInvariants() const
 	           TEXT("Input slot is not empty while AwaitingStart"));
 }
 
-ECadenceArcResolverResetResult UCadenceArcResolver::Reset()
+ECadenceArcResolverResetResult UCadenceArcResolver::ResetImpl()
 {
 	if (!IsInitialized())
 	{
@@ -354,7 +354,7 @@ FGameplayTag UCadenceArcResolver::GetBufferedInputTag() const
 		       : FGameplayTag::EmptyTag;
 }
 
-ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionStarted(const int64 InRequestId)
+ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionStartedImpl(const int64 InRequestId)
 {
 	const ECadenceArcHandshakeResult HandshakeResult = ValidateHandshake(
 		InRequestId, ECadenceArcResolverState::AwaitingStart);
@@ -369,13 +369,13 @@ ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionStarted(const int64 
 	return ECadenceArcHandshakeResult::Success;
 }
 
-ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionRejected(const int64 InRequestId)
+ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionRejectedImpl(const int64 InRequestId)
 {
 	// 候选没被接受，已提交节点从头到尾没变过，所以不换上下文
 	return EndAction(InRequestId, ECadenceArcResolverState::AwaitingStart, /*bReturnToEntry=*/false);
 }
 
-FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(
+FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompletedImpl(
 	const int64 InRequestId, const double CompletionTimestampSeconds
 )
 {
@@ -485,29 +485,19 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompleted(
 	return Outcome;
 }
 
-ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionCancelled(const int64 InRequestId)
+ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionCancelledImpl(const int64 InRequestId)
 {
 	// 连招被打断，退回入口重新开始，旧资格随上下文一起作废
 	return EndAction(InRequestId, ECadenceArcResolverState::Executing, /*bReturnToEntry=*/true);
 }
 
-ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionInterrupted(const int64 InRequestId)
+ECadenceArcHandshakeResult UCadenceArcResolver::NotifyActionInterruptedImpl(const int64 InRequestId)
 {
 	// 与 Cancelled 的对外行为相同；保留两个入口是为了让宿主表达不同的语义来源
 	return EndAction(InRequestId, ECadenceArcResolverState::Executing, /*bReturnToEntry=*/true);
 }
 
-ECadenceArcHandshakeResult UCadenceArcResolver::OpenBufferWindow(const int64 InRequestId)
-{
-	return SetBufferWindowState(InRequestId, true);
-}
-
-ECadenceArcHandshakeResult UCadenceArcResolver::CloseBufferWindow(const int64 InRequestId)
-{
-	return SetBufferWindowState(InRequestId, false);
-}
-
-FCadenceArcHoldOutcome UCadenceArcResolver::BeginInputHold(
+FCadenceArcHoldOutcome UCadenceArcResolver::BeginInputHoldImpl(
 	const FCadenceArcInputToken& Token, const FCadenceArcInputEvent& PressEvent
 )
 {
@@ -712,7 +702,7 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::FinishHoldRelease(
 	return Resolution;
 }
 
-FCadenceArcInputAdvanceOutcome UCadenceArcResolver::ReleaseInputHold(
+FCadenceArcInputAdvanceOutcome UCadenceArcResolver::ReleaseInputHoldImpl(
 	const FCadenceArcInputToken& Token, const FCadenceArcInputEvent& ReleaseEvent)
 {
 	FCadenceArcInputAdvanceOutcome Outcome; // 默认拒绝且空载荷
@@ -791,7 +781,7 @@ FCadenceArcInputAdvanceOutcome UCadenceArcResolver::ReleaseInputHold(
 }
 
 
-FCadenceArcInputAdvanceOutcome UCadenceArcResolver::AdvanceInputTime(const double NowSeconds)
+FCadenceArcInputAdvanceOutcome UCadenceArcResolver::AdvanceInputTimeImpl(const double NowSeconds)
 {
 	FCadenceArcInputAdvanceOutcome Outcome; // 默认拒绝且空载荷
 	if (!IsInitialized())
@@ -859,7 +849,7 @@ FCadenceArcInputAdvanceOutcome UCadenceArcResolver::AdvanceInputTime(const doubl
 	return Outcome;
 }
 
-FCadenceArcHoldOutcome UCadenceArcResolver::CancelInputHold(const FCadenceArcInputToken& Token)
+FCadenceArcHoldOutcome UCadenceArcResolver::CancelInputHoldImpl(const FCadenceArcInputToken& Token)
 {
 	FCadenceArcHoldOutcome Outcome; // 默认 Rejected / None
 
