@@ -46,7 +46,28 @@ public:
 	// 换图时重新布局并缓存标签；传 nullptr 表示清空
 	void SetGraph(const UCadenceArcGraph* InGraph);
 
+	// 平移和缩放要改滚动区，而滚动区在面板里：画布只识别手势，再交给面板处理
+	void SetInteractionHandlers(
+		TFunction<void(const FVector2D& ScreenDelta)> InOnPan,
+		TFunction<void(float WheelDelta, const FVector2D& CanvasLocalPosition)> InOnZoom);
+
+	// Arc History 里点中的记录对应的节点和边（索引指向当前布局）；空数组和 INDEX_NONE 表示没有
+	void SetHistoryFocus(const TArray<int32>& InNodes, int32 InEdge);
+
+	// 列号相差不小于 MinSpan 的边画成引用标记（0 关闭），立即重新布局。节点和边的索引不变，调试状态保留。
+	void SetReferenceMinSpan(int32 MinSpan);
+	int32 GetReferenceMinSpan() const { return Params.ReferenceMinSpan; }
+
+	// 左键点引用标记跳到目标、点目标一侧的接入线跳回源节点；滚动区在面板里，画布只报告要看哪个节点
+	void SetNavigateHandler(TFunction<void(int32 NodeIndex)> InOnNavigate) { OnNavigate = MoveTemp(InOnNavigate); }
+
 	virtual FVector2D ComputeDesiredSize(float) const override;
+	virtual FReply OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
+	virtual FReply OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
+	virtual FReply OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
+	virtual FReply OnMouseWheel(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
+	virtual void OnMouseLeave(const FPointerEvent& MouseEvent) override;
+	virtual FCursorReply OnCursorQuery(const FGeometry& MyGeometry, const FPointerEvent& CursorEvent) const override;
 
 	virtual int32 OnPaint(
 		const FPaintArgs& Args, const FGeometry& AllottedGeometry,
@@ -74,6 +95,17 @@ private:
 	// 布局和绘制共用同一份几何参数；节点位置、尺寸和连线路径都由布局给出，画布不再自己算。
 	FCadenceArcLayoutParams Params;
 	float Zoom = 1.f;
+
+	// 交互状态：只影响显示
+	TFunction<void(const FVector2D&)> OnPan;
+	TFunction<void(float, const FVector2D&)> OnZoom;
+	TFunction<void(int32)> OnNavigate;
+	bool bPanning = false;
+	int32 HoveredNode = INDEX_NONE;
+	int32 HoveredEdge = INDEX_NONE;
+	FVector2D HoverPoint = FVector2D::ZeroVector; // 布局坐标
+	TArray<int32> FocusNodes;
+	int32 FocusEdge = INDEX_NONE;
 
 	// 以下都在 SetGraph 里一次算好，OnPaint 只读这些，不再按下标访问活资产：
 	// 面板开着时资产被删改，也不会拿旧下标越界。

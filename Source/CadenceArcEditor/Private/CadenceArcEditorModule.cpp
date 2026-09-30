@@ -1,5 +1,6 @@
 ﻿#include "CadenceArcEditorModule.h"
 
+#include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "WorkspaceMenuStructure.h"
@@ -48,6 +49,11 @@ void FCadenceArcEditorModule::StartupModule()
 
 void FCadenceArcEditorModule::ShutdownModule()
 {
+	// 编辑器退出时 Slate 可能已经先关闭，这时不能再访问全局 TabManager
+	if (!FSlateApplication::IsInitialized())
+	{
+		return;
+	}
 	FGlobalTabmanager::Get()->UnregisterNomadTabSpawner("CadenceArcEditor");
 	FGlobalTabmanager::Get()->UnregisterNomadTabSpawner("CadenceArcHistory");
 }

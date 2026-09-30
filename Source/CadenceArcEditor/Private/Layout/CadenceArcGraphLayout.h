@@ -8,6 +8,13 @@ class UCadenceArcGraph;
 // 布局的全部几何参数。画布把同一份参数交给布局并用它绘制节点内部的行，节点尺寸只由布局计算。
 struct FCadenceArcLayoutParams
 {
+	// 引用标记：列号相差不小于它的边不画长线，改为源端口旁的一个小标记（写着目标名）加目标左侧的一小段接入线。
+	// 列号和行序的含义不变，只是这些边不再占用中间列的通道或底部通道。0 表示关闭。
+	int32 ReferenceMinSpan = 0;
+	float ReferenceGap = 32.f; // 标记与端口的水平距离：让开自环（LoopMargin）和回边（ReturnStub + 错开）的竖线
+	float ReferenceWidth = 70.f; // 标记宽度，右侧离下一列还留出接入箭头的位置
+	float ReferenceHeight = 14.f; // 小于 PortHeight，相邻端口的标记不会碰在一起
+	float ReferenceEntryStub = 16.f; // 目标一侧接入线的长度，短于 ReturnStub，不碰回边的竖线
 	float NodeWidth = 180.f;
 	float HeaderHeight = 24.f; // 节点标题行
 	float PortHeight = 18.f; // 每条出边一行
@@ -50,7 +57,12 @@ struct FCadenceArcLayoutEdge
 	// 目标列不在源列右侧的非自环边，从所有节点下方的通道绕回；值为通道序号，从上往下数。
 	int32 ReturnLane = INDEX_NONE;
 	// 实际绘制的折线：第一个点是源节点的端口，最后一个点是目标标题行左侧的接入点（坏目标为短线末端）。
+	// 引用边只有从端口到标记左边缘的一小段。
 	TArray<FVector2D> Path;
+	// 引用边（见 ReferenceMinSpan）：源一侧的标记矩形，和目标一侧的接入线（尾端 -> 接入点）。普通边两者都为空。
+	bool bIsReference = false;
+	FBox2D ReferenceBox = FBox2D(ForceInit);
+	TArray<FVector2D> EntryStub;
 	bool IsBrokenTarget() const { return TargetNodeIndex == INDEX_NONE; }
 };
 
@@ -89,3 +101,9 @@ struct FCadenceArcOffscreenHint
 };
 
 TOptional<FCadenceArcOffscreenHint> ComputeOffscreenHint(const FBox2D& Viewport, const FBox2D& Target, double Inset);
+
+// 鼠标命中测试（布局坐标）。节点优先于边：落在节点矩形里就返回该节点，否则返回离点最近、
+// 距离不超过 Tolerance 的边的实际绘制路径；都没有命中时返回 INDEX_NONE。距离相同按索引取小的，结果确定。
+// 引用边的标记矩形内部算距离 0，接入线和 Path 一样按线段算。
+int32 HitTestNode(const FCadenceArcGraphLayout& Layout, const FVector2D& Point);
+int32 HitTestEdge(const FCadenceArcGraphLayout& Layout, const FVector2D& Point, double Tolerance);

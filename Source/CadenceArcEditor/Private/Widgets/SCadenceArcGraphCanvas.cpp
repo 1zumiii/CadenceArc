@@ -1,6 +1,7 @@
 ﻿#include "SCadenceArcGraphCanvas.h"
 
 #include "Graph/CadenceArcGraph.h"
+#include "InputCoreTypes.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
@@ -14,6 +15,7 @@ namespace
 	constexpr float OffPathLabelAlpha = 0.3f;
 	constexpr float OffPathNodeAlpha = 0.35f;
 	const FLinearColor NextStepHeaderColor(0.36f, 0.38f, 0.50f); // 下一步节点的标题行稍亮
+	const FLinearColor HistoryFocusColor(0.72f, 0.45f, 1.0f); // Arc History 点中的记录对应的边和节点
 
 	const FLinearColor BodyColor(0.16f, 0.16f, 0.20f);
 	const FLinearColor HeaderColor(0.26f, 0.26f, 0.32f);
@@ -165,6 +167,22 @@ namespace
 		}
 		return Points;
 	}
+
+	TArray<FVector2f> BoxOutline(const FBox2D& Box)
+	{
+		return {
+			ToFloatPoint(Box.Min), ToFloatPoint(FVector2D(Box.Max.X, Box.Min.Y)),
+			ToFloatPoint(Box.Max), ToFloatPoint(FVector2D(Box.Min.X, Box.Max.Y)), ToFloatPoint(Box.Min)
+		};
+	}
+
+	// 引用标记上的文字："→ 目标名"，往回跳的边用 "↩"；放不下时截断（8 号字每个字符按约 5 像素估算）
+	FString ReferenceText(const FString& TargetName, const bool bJumpsBack, const double Width)
+	{
+		const int32 MaxChars = FMath::Max(2, static_cast<int32>((Width - 8.0) / 5.0) - 2);
+		const FString Name = TargetName.Len() <= MaxChars ? TargetName : TargetName.Left(MaxChars - 1) + TEXT("…");
+		return FString(bJumpsBack ? TEXT("↩ ") : TEXT("→ ")) + Name;
+	}
 }
 
 void SCadenceArcGraphCanvas::SetDebugView(const FCadenceArcDebugView& InDebugView)
@@ -268,6 +286,42 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 		return NodeDistance(Source) == INDEX_NONE ? EEmphasis::OffPath : EEmphasis::OnPath;
 	};
 
+	// 引用边两端的标记：源一侧是写着目标名的小框（预备边在框里填进度），目标一侧是一小段带箭头的接入线，
+	// 尾端一个小方块表示"从别处接过来"。标记底色盖在其他连线上面，文字不会被线穿过。
+	const auto DrawReferenceEnds = [&](const FCadenceArcLayoutEdge& Edge, const FLinearColor& LineColor,
+	                                   const FLinearColor& TextColor, const float Thickness, const float Progress)
+	{
+		const FBox2D& Box = Edge.ReferenceBox;
+		FSlateDrawElement::MakeBox(
+			OutDrawElements, BodyLayer, Geometry.ToPaintGeometry(Box.GetSize(), FSlateLayoutTransform(Box.Min)),
+			WhiteBrush, ESlateDrawEffect::None, FLinearColor(0.10f, 0.10f, 0.13f, 0.95f * TextColor.A));
+		if (Progress > 0.f)
+		{
+			FSlateDrawElement::MakeBox(
+				OutDrawElements, HeaderLayer,
+				Geometry.ToPaintGeometry(FVector2D(Box.GetSize().X * FMath::Min(Progress, 1.f), Box.GetSize().Y),
+				                         FSlateLayoutTransform(Box.Min)),
+				WhiteBrush, ESlateDrawEffect::None, Palette.PreparatoryProgress.CopyWithNewOpacity(0.45f));
+		}
+		FSlateDrawElement::MakeLines(OutDrawElements, OutlineLayer, CanvasGeometry, BoxOutline(Box),
+		                             ESlateDrawEffect::None, LineColor, true, FMath::Max(1.f, Thickness - 0.5f));
+		const FCadenceArcLayoutNode& Source = Layout.Nodes[Edge.SourceNodeIndex];
+		const FCadenceArcLayoutNode& Target = Layout.Nodes[Edge.TargetNodeIndex];
+		DrawLabel(OutDrawElements, TextLayer, Geometry, Box.Min + FVector2D(4.0, -1.0), Box.GetSize(),
+		          ReferenceText(ShortTagName(Target.ActionTag), Target.Column <= Source.Column, Box.GetSize().X),
+		          PortFont, TextColor);
+		if (Edge.EntryStub.Num() >= 2)
+		{
+			FSlateDrawElement::MakeLines(OutDrawElements, EdgeLayer, CanvasGeometry, ToFloatPath(Edge.EntryStub),
+			                             ESlateDrawEffect::None, LineColor, true, Thickness);
+			DrawArrowHead(OutDrawElements, EdgeLayer, CanvasGeometry, Edge.EntryStub, LineColor, Thickness);
+			FSlateDrawElement::MakeBox(
+				OutDrawElements, EdgeLayer,
+				Geometry.ToPaintGeometry(FVector2D(5.0, 5.0), FSlateLayoutTransform(Edge.EntryStub[0] - FVector2D(2.5, 2.5))),
+				WhiteBrush, ESlateDrawEffect::None, LineColor);
+		}
+	};
+
 	// 连线：路径由布局给出，第一个点是端口，最后一个点是接入点
 	for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
 	{
@@ -298,7 +352,12 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 				OutDrawElements, EdgeLayer, CanvasGeometry, ToFloatPath(Edge.Path),
 				DebugView.PreparatoryEdgeProgress[EdgeIndex], bCurrentRelease,
 				Palette.PreparatoryEdge, Palette.PreparatoryProgress);
-			if (!Edge.IsBrokenTarget())
+			if (Edge.bIsReference)
+			{
+				DrawReferenceEnds(Edge, Palette.PreparatoryEdge, Palette.PreparatoryEdge, bCurrentRelease ? 2.5f : 1.5f,
+				                  DebugView.PreparatoryEdgeProgress[EdgeIndex]);
+			}
+			else if (!Edge.IsBrokenTarget())
 			{
 				DrawArrowHead(OutDrawElements, EdgeLayer, CanvasGeometry, Edge.Path, Palette.PreparatoryEdge,
 				              bCurrentRelease ? 2.5f : 1.5f);
@@ -309,13 +368,22 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 		FLinearColor Color = bCandidateEdge
 			? Palette.CandidateEdge
 			: (Edge.IsBrokenTarget() ? BrokenColor : ColorForEdge(EdgeIndex));
+		float LabelAlpha = 1.f; // 引用标记上的文字，和端口行文字一样比连线淡得少
 		switch (EdgeEmphasis(EdgeIndex))
 		{
-		case EEmphasis::OnPath: Color.A = OnPathEdgeAlpha; break;
-		case EEmphasis::OffPath: Color.A = OffPathEdgeAlpha; break;
+		case EEmphasis::OnPath: Color.A = OnPathEdgeAlpha; LabelAlpha = OnPathLabelAlpha; break;
+		case EEmphasis::OffPath: Color.A = OffPathEdgeAlpha; LabelAlpha = OffPathLabelAlpha; break;
 		default: break;
 		}
-		const float EdgeThickness = bCandidateEdge ? 3.f : 1.5f;
+		// 悬停：鼠标下的边，或者鼠标下节点的出入边，不透明并加粗
+		const bool bHovered = EdgeIndex == HoveredEdge || (HoveredNode != INDEX_NONE
+			&& (Edge.SourceNodeIndex == HoveredNode || Edge.TargetNodeIndex == HoveredNode));
+		if (bHovered)
+		{
+			Color.A = 1.f;
+			LabelAlpha = 1.f;
+		}
+		const float EdgeThickness = (bCandidateEdge ? 3.f : 1.5f) + (bHovered ? 1.5f : 0.f);
 		if (Edge.ReturnLane != INDEX_NONE && !bCandidateEdge)
 		{
 			// 回边用虚线，一眼能看出是"往回跳"
@@ -329,9 +397,34 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 				OutDrawElements, EdgeLayer, CanvasGeometry, ToFloatPath(Edge.Path),
 				ESlateDrawEffect::None, Color, true, EdgeThickness);
 		}
-		if (!Edge.IsBrokenTarget())
+		if (Edge.bIsReference)
+		{
+			DrawReferenceEnds(Edge, Color, Color.CopyWithNewOpacity(LabelAlpha), EdgeThickness, 0.f);
+		}
+		else if (!Edge.IsBrokenTarget())
 		{
 			DrawArrowHead(OutDrawElements, EdgeLayer, CanvasGeometry, Edge.Path, Color, EdgeThickness);
+		}
+	}
+
+	// Arc History 点中的记录对应的边：紫色粗线盖在其他连线之上；引用边连同两端的标记一起描
+	if (Layout.Edges.IsValidIndex(FocusEdge) && Layout.Edges[FocusEdge].Path.Num() >= 2)
+	{
+		const FCadenceArcLayoutEdge& Edge = Layout.Edges[FocusEdge];
+		FSlateDrawElement::MakeLines(
+			OutDrawElements, EdgeLayer, CanvasGeometry, ToFloatPath(Edge.Path),
+			ESlateDrawEffect::None, HistoryFocusColor, true, 4.f);
+		if (Edge.bIsReference)
+		{
+			FSlateDrawElement::MakeLines(OutDrawElements, OutlineLayer, CanvasGeometry, BoxOutline(Edge.ReferenceBox.ExpandBy(2.0)),
+			                             ESlateDrawEffect::None, HistoryFocusColor, true, 2.5f);
+			FSlateDrawElement::MakeLines(OutDrawElements, EdgeLayer, CanvasGeometry, ToFloatPath(Edge.EntryStub),
+			                             ESlateDrawEffect::None, HistoryFocusColor, true, 4.f);
+			DrawArrowHead(OutDrawElements, EdgeLayer, CanvasGeometry, Edge.EntryStub, HistoryFocusColor, 3.f);
+		}
+		else
+		{
+			DrawArrowHead(OutDrawElements, EdgeLayer, CanvasGeometry, Edge.Path, HistoryFocusColor, 3.f);
 		}
 	}
 
@@ -399,6 +492,24 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 				2.f // 线宽
 			);
 		}
+
+		// Arc History 点中的节点（紫色），以及鼠标悬停的节点或悬停边的两端（白色）
+		const bool bHistoryFocus = FocusNodes.Contains(NodeIndex);
+		const bool bHoverOutline = NodeIndex == HoveredNode || (Layout.Edges.IsValidIndex(HoveredEdge)
+			&& (Layout.Edges[HoveredEdge].SourceNodeIndex == NodeIndex
+				|| Layout.Edges[HoveredEdge].TargetNodeIndex == NodeIndex));
+		if (bHistoryFocus || bHoverOutline)
+		{
+			const FVector2D Pad(bHistoryFocus ? 6.0 : 1.5, bHistoryFocus ? 6.0 : 1.5);
+			FSlateDrawElement::MakeLines(
+				OutDrawElements, OutlineLayer, CanvasGeometry,
+				TArray{
+					TopLeft - Pad, FVector2D(TopLeft.X + Size.X + Pad.X, TopLeft.Y - Pad.Y),
+					TopLeft + Size + Pad, FVector2D(TopLeft.X - Pad.X, TopLeft.Y + Size.Y + Pad.Y), TopLeft - Pad
+				},
+				ESlateDrawEffect::None, bHistoryFocus ? HistoryFocusColor : FLinearColor::White, true,
+				bHistoryFocus ? 2.5f : 1.5f);
+		}
 	}
 
 	// 端口行：条件文字与连线同色，右侧一个小圆点作为引出点（即路径的第一个点）
@@ -438,5 +549,154 @@ int32 SCadenceArcGraphCanvas::OnPaint(
 				DisplayColor);
 		}
 	}
+
+	// 悬停在边上：在鼠标旁边写出这条边从哪到哪、什么条件
+	if (Layout.Edges.IsValidIndex(HoveredEdge))
+	{
+		const FCadenceArcLayoutEdge& Edge = Layout.Edges[HoveredEdge];
+		const FString Text = FString::Printf(TEXT("%s → %s · %s%s"),
+		                                     *ShortTagName(Layout.Nodes[Edge.SourceNodeIndex].ActionTag),
+		                                     Edge.IsBrokenTarget() ? TEXT("?") : *ShortTagName(Layout.Nodes[Edge.TargetNodeIndex].ActionTag),
+		                                     *EdgeLabels[HoveredEdge],
+		                                     Edge.bIsReference ? TEXT(" · click to jump") : TEXT(""));
+		const FVector2D BoxSize(Text.Len() * 6.5 + 14.0, 20.0);
+		const FVector2D BoxTopLeft = HoverPoint + FVector2D(14.0, 12.0);
+		FSlateDrawElement::MakeBox(
+			OutDrawElements, TextLayer + 1,
+			Geometry.ToPaintGeometry(BoxSize, FSlateLayoutTransform(BoxTopLeft)),
+			WhiteBrush, ESlateDrawEffect::None, FLinearColor(0.05f, 0.05f, 0.07f, 0.92f));
+		DrawLabel(OutDrawElements, TextLayer + 2, Geometry, BoxTopLeft + FVector2D(7.0, 2.0),
+		          BoxSize, Text, PortFont, FLinearColor::White);
+		return TextLayer + 2;
+	}
 	return TextLayer;
+}
+
+void SCadenceArcGraphCanvas::SetInteractionHandlers(
+	TFunction<void(const FVector2D& ScreenDelta)> InOnPan,
+	TFunction<void(float WheelDelta, const FVector2D& CanvasLocalPosition)> InOnZoom)
+{
+	OnPan = MoveTemp(InOnPan);
+	OnZoom = MoveTemp(InOnZoom);
+}
+
+void SCadenceArcGraphCanvas::SetHistoryFocus(const TArray<int32>& InNodes, const int32 InEdge)
+{
+	if (InNodes != FocusNodes || InEdge != FocusEdge)
+	{
+		FocusNodes = InNodes;
+		FocusEdge = InEdge;
+		Invalidate(EInvalidateWidgetReason::Paint);
+	}
+}
+
+void SCadenceArcGraphCanvas::SetReferenceMinSpan(const int32 MinSpan)
+{
+	if (MinSpan == Params.ReferenceMinSpan)
+	{
+		return;
+	}
+	Params.ReferenceMinSpan = MinSpan;
+	if (const UCadenceArcGraph* CurrentGraph = Graph.Get())
+	{
+		// SetGraph 会清空调试状态；节点和边的索引不随参数变化，原样放回
+		const FCadenceArcDebugView View = DebugView;
+		SetGraph(CurrentGraph);
+		DebugView = View;
+	}
+}
+
+FReply SCadenceArcGraphCanvas::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
+{
+	// 右键或中键拖动平移
+	if (MouseEvent.GetEffectingButton() == EKeys::RightMouseButton
+		|| MouseEvent.GetEffectingButton() == EKeys::MiddleMouseButton)
+	{
+		bPanning = true;
+		return FReply::Handled().CaptureMouse(SharedThis(this));
+	}
+	// 左键点引用边：点在目标一侧的接入线上回到源节点，点标记或端口短线去目标
+	if (MouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && OnNavigate)
+	{
+		const double Tolerance = 6.0 / FMath::Max(Zoom, 0.01f);
+		const FVector2D Point = MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition()) / FMath::Max(Zoom, 0.01f);
+		const int32 EdgeIndex = HitTestNode(Layout, Point) == INDEX_NONE ? HitTestEdge(Layout, Point, Tolerance) : INDEX_NONE;
+		if (Layout.Edges.IsValidIndex(EdgeIndex) && Layout.Edges[EdgeIndex].bIsReference)
+		{
+			const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
+			const bool bAtEntry = Edge.EntryStub.Num() >= 2 && FMath::PointDistToSegmentSquared(
+				FVector(Point, 0.0), FVector(Edge.EntryStub[0], 0.0), FVector(Edge.EntryStub.Last(), 0.0)) <= Tolerance * Tolerance;
+			OnNavigate(bAtEntry ? Edge.SourceNodeIndex : Edge.TargetNodeIndex);
+			return FReply::Handled();
+		}
+	}
+	return FReply::Unhandled();
+}
+
+FReply SCadenceArcGraphCanvas::OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
+{
+	if (bPanning)
+	{
+		bPanning = false;
+		return FReply::Handled().ReleaseMouseCapture();
+	}
+	return FReply::Unhandled();
+}
+
+FReply SCadenceArcGraphCanvas::OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
+{
+	if (bPanning && HasMouseCapture())
+	{
+		if (OnPan)
+		{
+			OnPan(MouseEvent.GetCursorDelta());
+		}
+		return FReply::Handled();
+	}
+	// 悬停：先看节点，再看离得最近的连线（容差按屏幕约 6 像素换算到布局坐标）
+	HoverPoint = MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition()) / FMath::Max(Zoom, 0.01f);
+	const int32 Node = HitTestNode(Layout, HoverPoint);
+	const int32 Edge = Node == INDEX_NONE ? HitTestEdge(Layout, HoverPoint, 6.0 / FMath::Max(Zoom, 0.01f)) : INDEX_NONE;
+	if (Node != HoveredNode || Edge != HoveredEdge || Edge != INDEX_NONE)
+	{
+		HoveredNode = Node;
+		HoveredEdge = Edge;
+		Invalidate(EInvalidateWidgetReason::Paint); // 悬停在边上时提示框跟着鼠标走
+	}
+	return FReply::Unhandled();
+}
+
+FReply SCadenceArcGraphCanvas::OnMouseWheel(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
+{
+	// Ctrl + 滚轮以鼠标为中心缩放；普通滚轮交给外面的滚动区
+	if (MouseEvent.IsControlDown() && OnZoom)
+	{
+		OnZoom(MouseEvent.GetWheelDelta(), MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition()));
+		return FReply::Handled();
+	}
+	return FReply::Unhandled();
+}
+
+void SCadenceArcGraphCanvas::OnMouseLeave(const FPointerEvent& MouseEvent)
+{
+	if (HoveredNode != INDEX_NONE || HoveredEdge != INDEX_NONE)
+	{
+		HoveredNode = INDEX_NONE;
+		HoveredEdge = INDEX_NONE;
+		Invalidate(EInvalidateWidgetReason::Paint);
+	}
+}
+
+FCursorReply SCadenceArcGraphCanvas::OnCursorQuery(const FGeometry& MyGeometry, const FPointerEvent& CursorEvent) const
+{
+	if (bPanning)
+	{
+		return FCursorReply::Cursor(EMouseCursor::GrabHandClosed);
+	}
+	// 引用边可以点击跳转
+	if (Layout.Edges.IsValidIndex(HoveredEdge) && Layout.Edges[HoveredEdge].bIsReference)
+	{
+		return FCursorReply::Cursor(EMouseCursor::Hand);
+	}
+	return FCursorReply::Unhandled();
 }

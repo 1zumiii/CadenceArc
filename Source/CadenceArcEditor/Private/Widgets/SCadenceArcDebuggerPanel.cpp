@@ -7,12 +7,15 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Graph/CadenceArcGraph.h"
+#include "Misc/ConfigCacheIni.h"
 #include "Resolver/CadenceArcResolver.h"
 #include "Styling/CoreStyle.h"
 #include "ViewModel/CadenceArcDebuggerSelection.h"
+#include "UObject/Package.h"
 #include "UObject/UObjectIterator.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Input/SSpinBox.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/SCanvas.h"
@@ -22,6 +25,8 @@
 
 namespace
 {
+	const TCHAR* ConfigSection = TEXT("CadenceArc.Debugger");
+
 	const TCHAR* StateName(const ECadenceArcResolverState State)
 	{
 		switch (State)
@@ -156,6 +161,52 @@ void SCadenceArcDebuggerPanel::Construct(const FArguments& InArgs)
 						SNew(STextBlock).Text(FText::FromString(TEXT("Follow")))
 					]
 				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(16.f, 0.f, 0.f, 0.f)
+				[
+					SNew(SCheckBox)
+					.IsChecked_Lambda([this]()
+					{
+						return bUseReferences ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+					})
+					.OnCheckStateChanged_Lambda([this](const ECheckBoxState NewState)
+					{
+						bUseReferences = NewState == ECheckBoxState::Checked;
+						ApplyReferenceSetting(true);
+					})
+					.ToolTipText(FText::FromString(TEXT("Draw edges that span at least this many columns as a short reference next to the source instead of a long line. Click a reference to jump to its target; click the stub at the target to jump back.")))
+					[
+						SNew(STextBlock).Text(FText::FromString(TEXT("References, span ≥")))
+					]
+				]
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.Padding(4.f, 0.f, 0.f, 0.f)
+				[
+					SNew(SBox)
+					.WidthOverride(48.f)
+					[
+						SNew(SSpinBox<int32>)
+						.MinValue(2)
+						.MaxValue(9)
+						.Delta(1)
+						.IsEnabled_Lambda([this]() { return bUseReferences; })
+						.Value_Lambda([this]() { return ReferenceMinSpan; })
+						.OnValueChanged_Lambda([this](const int32 NewValue)
+						{
+							ReferenceMinSpan = NewValue;
+							ApplyReferenceSetting(false); // 拖动中实时预览，松手再写配置
+						})
+						.OnValueCommitted_Lambda([this](const int32 NewValue, ETextCommit::Type)
+						{
+							ReferenceMinSpan = NewValue;
+							ApplyReferenceSetting(true);
+						})
+					]
+				]
 			]
 		]
 		+ SVerticalBox::Slot()
@@ -262,6 +313,15 @@ void SCadenceArcDebuggerPanel::Construct(const FArguments& InArgs)
 		]
 	];
 	Canvas->SetGraph(nullptr); // 初始化 Canvas 的 Graph 为 nullptr
+	// 画布识别手势，滚动区在这里：右键或中键拖动平移，Ctrl + 滚轮缩放
+	Canvas->SetInteractionHandlers(
+		[this](const FVector2D& ScreenDelta) { PanBy(ScreenDelta); },
+		[this](const float WheelDelta, const FVector2D& CanvasLocal) { ZoomAt(WheelDelta, CanvasLocal); });
+	Canvas->SetNavigateHandler([this](const int32 NodeIndex) { ScrollNodeIntoView(NodeIndex); });
+	GConfig->GetBool(ConfigSection, TEXT("bUseReferences"), bUseReferences, GEditorPerProjectIni);
+	GConfig->GetInt(ConfigSection, TEXT("ReferenceMinSpan"), ReferenceMinSpan, GEditorPerProjectIni);
+	ReferenceMinSpan = FMath::Clamp(ReferenceMinSpan, 2, 9);
+	ApplyReferenceSetting(false);
 
 	EndPIEHandle = FEditorDelegates::EndPIE.AddSP(
 		this, &SCadenceArcDebuggerPanel::OnEndPIE
@@ -333,8 +393,21 @@ void SCadenceArcDebuggerPanel::RefreshSelectedResolver()
 	Canvas->SetDebugView(LatestView);
 	ChargeTimeline->SetSnapshot(DisplayedHoldSnapshot);
 	FollowCommittedNode();
+	ApplyHistoryFocus();
 	UpdateOffscreenHints();
 	Invalidate(EInvalidateWidgetReason::Layout | EInvalidateWidgetReason::Paint);
+}
+
+void SCadenceArcDebuggerPanel::ApplyReferenceSetting(const bool bSave)
+{
+	Canvas->SetReferenceMinSpan(bUseReferences ? ReferenceMinSpan : 0);
+	RequestFollow(); // 布局变了，按新位置重新定位当前节点
+	HintSignature.Reset();
+	if (bSave)
+	{
+		GConfig->SetBool(ConfigSection, TEXT("bUseReferences"), bUseReferences, GEditorPerProjectIni);
+		GConfig->SetInt(ConfigSection, TEXT("ReferenceMinSpan"), ReferenceMinSpan, GEditorPerProjectIni);
+	}
 }
 
 void SCadenceArcDebuggerPanel::RequestFollow()
@@ -360,11 +433,16 @@ void SCadenceArcDebuggerPanel::FollowCommittedNode()
 	{
 		return;
 	}
-	// 整组 = 已提交节点 + 它的直接后继（下一步能去的地方）；自环和坏目标不扩大范围
+	// 整组 = 已提交节点 + 它的直接后继（下一步能去的地方）；自环和坏目标不扩大范围。
+	// 引用边的目标名已经写在源节点旁的标记上，只需让标记可见，不必为远处的目标缩小视图
 	FBox2D Group = Primary.GetValue();
 	for (const FCadenceArcLayoutEdge& Edge : Canvas->GetLayout().Edges)
 	{
-		if (Edge.SourceNodeIndex == NodeIndex && !Edge.IsBrokenTarget() && Edge.TargetNodeIndex != NodeIndex)
+		if (Edge.SourceNodeIndex == NodeIndex && Edge.bIsReference)
+		{
+			Group += Edge.ReferenceBox;
+		}
+		else if (Edge.SourceNodeIndex == NodeIndex && !Edge.IsBrokenTarget() && Edge.TargetNodeIndex != NodeIndex)
 		{
 			if (const TOptional<FBox2D> Successor = Canvas->GetNodeLayoutBounds(Edge.TargetNodeIndex))
 			{
@@ -399,6 +477,101 @@ void SCadenceArcDebuggerPanel::FollowCommittedNode()
 	           Primary->Min.X * Zoom, Primary->Max.X * Zoom, Group.Min.X * Zoom, Group.Max.X * Zoom);
 	ScrollAxis(*VerticalScroll, VisibleHeight,
 	           Primary->Min.Y * Zoom, Primary->Max.Y * Zoom, Group.Min.Y * Zoom, Group.Max.Y * Zoom);
+}
+
+void SCadenceArcDebuggerPanel::PanBy(const FVector2D& ScreenDelta)
+{
+	// 手动平移或缩放之后不再自动跟随，免得下一次切换节点时视口被拽走；重新勾选 Follow 即可恢复
+	bFollowCommittedNode = false;
+	const FVector2D Visible(HorizontalScroll->GetCachedGeometry().GetLocalSize().X,
+	                        VerticalScroll->GetCachedGeometry().GetLocalSize().Y);
+	const FVector2D Content = Canvas->GetDesiredSize();
+	HorizontalScroll->SetScrollOffset(static_cast<float>(FMath::Clamp(
+		HorizontalScroll->GetScrollOffset() - ScreenDelta.X, 0.0, FMath::Max(0.0, Content.X - Visible.X))));
+	VerticalScroll->SetScrollOffset(static_cast<float>(FMath::Clamp(
+		VerticalScroll->GetScrollOffset() - ScreenDelta.Y, 0.0, FMath::Max(0.0, Content.Y - Visible.Y))));
+}
+
+void SCadenceArcDebuggerPanel::ZoomAt(const float WheelDelta, const FVector2D& CanvasLocal)
+{
+	bFollowCommittedNode = false;
+	const float OldZoom = Canvas->GetZoom();
+	const float NewZoom = FMath::Clamp(OldZoom * FMath::Pow(1.1f, WheelDelta), 0.3f, 2.0f);
+	if (NewZoom == OldZoom)
+	{
+		return;
+	}
+	Canvas->SetZoom(NewZoom);
+	// 保持鼠标下的那一点不动：它在视口里的位置不变，画布坐标按比例放大
+	const FVector2D Offset(HorizontalScroll->GetScrollOffset(), VerticalScroll->GetScrollOffset());
+	const FVector2D InView = CanvasLocal - Offset;
+	const FVector2D NewOffset = CanvasLocal * (NewZoom / OldZoom) - InView;
+	const FVector2D Visible(HorizontalScroll->GetCachedGeometry().GetLocalSize().X,
+	                        VerticalScroll->GetCachedGeometry().GetLocalSize().Y);
+	const FVector2D Content = Canvas->GetLayout().Size * NewZoom;
+	HorizontalScroll->SetScrollOffset(static_cast<float>(
+		FMath::Clamp(NewOffset.X, 0.0, FMath::Max(0.0, Content.X - Visible.X))));
+	VerticalScroll->SetScrollOffset(static_cast<float>(
+		FMath::Clamp(NewOffset.Y, 0.0, FMath::Max(0.0, Content.Y - Visible.Y))));
+}
+
+void SCadenceArcDebuggerPanel::ApplyHistoryFocus()
+{
+	// Arc History 点中的记录：按 Tag 在当前布局里找到节点和边（边要源、目标、输入都对上且唯一，否则只高亮节点）
+	const FCadenceArcHistoryFocus& Focus = CadenceArc::Editor::DebuggerSelection::GetHistoryFocus();
+	const FCadenceArcGraphLayout& Layout = Canvas->GetLayout();
+	const auto FindNode = [&Layout](const FGameplayTag& ActionTag) -> int32
+	{
+		if (!ActionTag.IsValid())
+		{
+			return INDEX_NONE;
+		}
+		return Layout.Nodes.IndexOfByPredicate(
+			[&ActionTag](const FCadenceArcLayoutNode& Node) { return Node.ActionTag == ActionTag; });
+	};
+	TArray<int32> Nodes;
+	int32 Edge = INDEX_NONE;
+	if (Focus.Sequence != 0)
+	{
+		const int32 Source = FindNode(Focus.SourceNode);
+		const int32 Target = FindNode(Focus.TargetNode);
+		for (const int32 Node : {Source, Target})
+		{
+			if (Node != INDEX_NONE)
+			{
+				Nodes.AddUnique(Node);
+			}
+		}
+		if (Source != INDEX_NONE && Target != INDEX_NONE)
+		{
+			int32 Matches = 0;
+			for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
+			{
+				const FCadenceArcLayoutEdge& Candidate = Layout.Edges[EdgeIndex];
+				if (Candidate.SourceNodeIndex == Source && Candidate.TargetNodeIndex == Target
+					&& Candidate.Transition.InputTag == Focus.InputTag)
+				{
+					Edge = EdgeIndex;
+					++Matches;
+				}
+			}
+			if (Matches != 1)
+			{
+				Edge = INDEX_NONE; // 没有或不止一条：不猜是哪条边
+			}
+		}
+	}
+	Canvas->SetHistoryFocus(Nodes, Edge);
+
+	// 新点中一条记录时把它滚进视口（只滚一次，之后不干预手动浏览）
+	if (Focus.Sequence != AppliedFocusSequence)
+	{
+		AppliedFocusSequence = Focus.Sequence;
+		if (!Nodes.IsEmpty())
+		{
+			ScrollNodeIntoView(Nodes.Last());
+		}
+	}
 }
 
 void SCadenceArcDebuggerPanel::ScrollNodeIntoView(const int32 NodeIndex)
@@ -440,7 +613,9 @@ void SCadenceArcDebuggerPanel::UpdateOffscreenHints()
 		for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
 		{
 			const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
-			if (Edge.SourceNodeIndex != NodeIndex || Edge.IsBrokenTarget() || Edge.TargetNodeIndex == NodeIndex)
+			// 引用边在源节点旁已经有可点击的标记，不再重复提示
+			if (Edge.SourceNodeIndex != NodeIndex || Edge.IsBrokenTarget() || Edge.TargetNodeIndex == NodeIndex
+				|| Edge.bIsReference)
 			{
 				continue;
 			}
@@ -596,7 +771,9 @@ FReply SCadenceArcDebuggerPanel::OnRefreshClicked()
 		const AActor* Actor = Resolver->GetTypedOuter<AActor>();
 		const FString OwnerName = Actor ? Actor->GetName() : Resolver->GetName();
 		const FString Label =
-			FString::Printf(TEXT("%s @ %s"), *OwnerName, *World->GetName());
+			// 多客户端 PIE 时各 World 的对象名都是地图名，加上 PIE 实例号才分得清
+			FString::Printf(TEXT("%s @ %s [PIE %d]"), *OwnerName, *World->GetName(),
+			                World->GetOutermost()->GetPIEInstanceID());
 
 		Options.Add(MakeShared<FResolverOption>(
 			FResolverOption{.Resolver = Resolver, .Label = Label}

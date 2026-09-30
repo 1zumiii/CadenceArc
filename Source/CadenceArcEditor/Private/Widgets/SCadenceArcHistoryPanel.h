@@ -27,7 +27,10 @@ private:
 	{
 		uint64 Sequence = 0; // 0 表示"中间有记录被覆盖"的提示行
 		FCadenceArcDebugEventText Text;
+		FCadenceArcHistoryFocus Focus; // 点中这一行时在 Arc Debugger 里高亮的位置
 	};
+
+	void OnRowSelected(TSharedPtr<FRow> Row, ESelectInfo::Type SelectInfo);
 
 	EActiveTimerReturnType OnRefreshTick(double CurrentTime, float DeltaTime);
 	void ResetRows();

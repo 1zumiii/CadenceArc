@@ -24,8 +24,7 @@ public class CadenceArcEditor : ModuleRules
 				"InputCore",
 				"UnrealEd",
 				"WorkspaceMenuStructure",
-				"GameplayTags",
-				"CadenceArc"
+				"GameplayTags"
 			]
 		);
 	}

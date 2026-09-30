@@ -161,11 +161,14 @@ namespace CadenceArc::Editor::Tests
 	// 实际绘制路径的几何性质，检查的是画布照着画的点列本身，而不只是途经点：
 	// - 每条边从源节点端口出发；有效目标的边终止于目标左边界、标题行高度以内；
 	// - 路径的每一小段都不进入任何无关节点（外扩线路安全边距）；
+	// - 引用边：端口短线接到标记左边缘，接入线终止于目标左边界；标记和接入线不碰任何节点（包括两端），
+	//   标记右侧离下一列至少留出接入箭头的位置，并且在画布尺寸之内；
 	// - 同一列真实节点按行号自上而下排列，彼此不重叠并留出最小间距。
 	static void ExpectGeometry(FAutomationTestBase& Test, const FCadenceArcGraphLayout& Layout)
 	{
 		const FCadenceArcLayoutParams Params;
 		constexpr double Clearance = 2.0;
+		constexpr double ArrowRoom = 8.0; // 画布上的箭头长 7
 		for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
 		{
 			const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
@@ -178,21 +181,47 @@ namespace CadenceArc::Editor::Tests
 				Params.NodeWidth, Params.HeaderHeight + (Edge.TransitionIndex + 0.5) * Params.PortHeight);
 			Test.TestTrue(*FString::Printf(TEXT("Edge %d starts at its port"), EdgeIndex),
 			              Edge.Path[0].Equals(ExpectedPort, 1.e-6));
+			Test.TestTrue(*FString::Printf(TEXT("Edge %d has reference parts exactly when it is a reference"), EdgeIndex),
+			              Edge.bIsReference == Edge.ReferenceBox.bIsValid && Edge.bIsReference == (Edge.EntryStub.Num() >= 2));
 			if (!Edge.IsBrokenTarget())
 			{
 				const FCadenceArcLayoutNode& Target = Layout.Nodes[Edge.TargetNodeIndex];
-				const FVector2D End = Edge.Path.Last();
+				const FVector2D End = Edge.bIsReference ? Edge.EntryStub.Last() : Edge.Path.Last();
 				Test.TestTrue(*FString::Printf(TEXT("Edge %d ends on the target title's left edge"), EdgeIndex),
 				              FMath::IsNearlyEqual(End.X, Target.Position.X, 1.e-6)
 				              && End.Y >= Target.Position.Y && End.Y <= Target.Position.Y + Params.HeaderHeight);
 			}
+			if (Edge.bIsReference)
+			{
+				const FBox2D& Box = Edge.ReferenceBox;
+				Test.TestTrue(*FString::Printf(TEXT("Edge %d stub reaches its reference"), EdgeIndex),
+				              Edge.Path.Last().Equals(FVector2D(Box.Min.X, Box.GetCenter().Y), 1.e-6));
+				Test.TestTrue(*FString::Printf(TEXT("Edge %d reference leaves room before the next column"), EdgeIndex),
+				              Box.Max.X <= Source.Position.X + Params.NodeWidth + Params.ColumnGap - ArrowRoom);
+				Test.TestTrue(*FString::Printf(TEXT("Edge %d reference is inside the canvas"), EdgeIndex),
+				              Box.Min.X >= 0.0 && Box.Min.Y >= 0.0 && Box.Max.X <= Layout.Size.X && Box.Max.Y <= Layout.Size.Y);
+			}
 			for (const FCadenceArcLayoutNode& Node : Layout.Nodes)
 			{
+				const FBox2D Obstacle(Node.Position - FVector2D(Clearance), Node.Position + Node.Size + FVector2D(Clearance));
+				if (Edge.bIsReference)
+				{
+					bool bStubHit = false;
+					for (int32 Point = 1; Point < Edge.EntryStub.Num() && !bStubHit; ++Point)
+					{
+						// 接入线的终点就落在目标边界上，所以只对目标检查不外扩的矩形
+						const FBox2D Box = Node.NodeIndex == Edge.TargetNodeIndex
+							? FBox2D(Node.Position + FVector2D(0.1, 0.0), Node.Position + Node.Size) : Obstacle;
+						bStubHit = SegmentHitsBox(Edge.EntryStub[Point - 1], Edge.EntryStub[Point], Box);
+					}
+					Test.TestFalse(*FString::Printf(TEXT("Edge %d entry stub crosses node %d"), EdgeIndex, Node.NodeIndex), bStubHit);
+					Test.TestFalse(*FString::Printf(TEXT("Edge %d reference overlaps node %d"), EdgeIndex, Node.NodeIndex),
+					               Edge.ReferenceBox.Intersect(Obstacle));
+				}
 				if (Node.NodeIndex == Edge.SourceNodeIndex || Node.NodeIndex == Edge.TargetNodeIndex)
 				{
 					continue;
 				}
-				const FBox2D Obstacle(Node.Position - FVector2D(Clearance), Node.Position + Node.Size + FVector2D(Clearance));
 				bool bHit = false;
 				for (int32 Point = 1; Point < Edge.Path.Num() && !bHit; ++Point)
 				{
@@ -236,7 +265,7 @@ namespace CadenceArc::Editor::Tests
 		for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
 		{
 			const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
-			if (Edge.IsBrokenTarget() || Edge.SourceNodeIndex == Edge.TargetNodeIndex)
+			if (Edge.IsBrokenTarget() || Edge.SourceNodeIndex == Edge.TargetNodeIndex || Edge.bIsReference)
 			{
 				Test.TestEqual(*FString::Printf(TEXT("Edge %d needs no lane"), EdgeIndex), Edge.ReturnLane, INDEX_NONE);
 				continue;
@@ -777,6 +806,82 @@ namespace CadenceArc::Editor::Tests
 	}
 
 	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcLayoutReferenceTest,
+		"CadenceArc.Editor.Layout.ReferencesReplaceLongEdges",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcLayoutReferenceTest::RunTest(const FString& Parameters)
+	{
+		// 打开引用标记：列号差不小于阈值的边（前向和往回的都算）改成引用，列号不变；
+		// 引用边不占底部通道，两端标记的几何由 ExpectLayoutInvariants 检查。
+		const UCadenceArcGraph* Graph = MakeRealComboGraph();
+		const FCadenceArcGraphLayout Plain = BuildGraphLayout(*Graph);
+		for (const FCadenceArcLayoutEdge& Edge : Plain.Edges)
+		{
+			TestFalse(TEXT("References are off by default"), Edge.bIsReference);
+		}
+		for (const int32 MinSpan : {2, 3})
+		{
+			FCadenceArcLayoutParams Params;
+			Params.ReferenceMinSpan = MinSpan;
+			const FCadenceArcGraphLayout Layout = BuildGraphLayout(*Graph, Params);
+			for (int32 Index = 0; Index < Layout.Nodes.Num(); ++Index)
+			{
+				TestEqual(*FString::Printf(TEXT("Span %d: node %d keeps its column"), MinSpan, Index),
+				          Layout.Nodes[Index].Column, Plain.Nodes[Index].Column);
+			}
+			for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
+			{
+				const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
+				const int32 Span = FMath::Abs(Layout.Nodes[Edge.TargetNodeIndex].Column - Layout.Nodes[Edge.SourceNodeIndex].Column);
+				TestTrue(*FString::Printf(TEXT("Span %d: edge %d is a reference exactly when it spans enough columns"), MinSpan, EdgeIndex),
+				         Edge.bIsReference == (Span >= MinSpan));
+			}
+			ExpectLayoutInvariants(*this, Layout);
+		}
+
+		// 阈值 3：SkillA -> FinalB（e5）和 SkillC -> FinalC（e14）；跨 2 列的循环回边仍走底部通道
+		FCadenceArcLayoutParams Three;
+		Three.ReferenceMinSpan = 3;
+		const FCadenceArcGraphLayout Layout = BuildGraphLayout(*Graph, Three);
+		TestTrue(TEXT("Span 3 references the two long finisher edges"),
+		         Layout.Edges[5].bIsReference && Layout.Edges[14].bIsReference);
+		TestEqual(TEXT("Span 3 keeps the loop back in a lane"), Layout.NumReturnLanes, 1);
+		FCadenceArcLayoutParams Two;
+		Two.ReferenceMinSpan = 2;
+		TestEqual(TEXT("Span 2 turns the loop back into a reference"), BuildGraphLayout(*Graph, Two).NumReturnLanes, 0);
+
+		// 命中测试：标记内部和目标一侧的接入线都算这条边
+		const FCadenceArcLayoutEdge& Reference = Layout.Edges[5];
+		TestEqual(TEXT("Point in the reference hits its edge"),
+		          HitTestEdge(Layout, Reference.ReferenceBox.GetCenter(), 1.0), 5);
+		TestEqual(TEXT("Point on the entry stub hits its edge"),
+		          HitTestEdge(Layout, (Reference.EntryStub[0] + Reference.EntryStub.Last()) * 0.5, 1.0), 5);
+
+		// 同一输入每次结果一致
+		const FCadenceArcGraphLayout Again = BuildGraphLayout(*Graph, Three);
+		for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
+		{
+			TestTrue(*FString::Printf(TEXT("Edge %d is deterministic"), EdgeIndex),
+			         Layout.Edges[EdgeIndex].Path == Again.Edges[EdgeIndex].Path
+			         && Layout.Edges[EdgeIndex].EntryStub == Again.Edges[EdgeIndex].EntryStub
+			         && Layout.Edges[EdgeIndex].ReferenceBox == Again.Edges[EdgeIndex].ReferenceBox);
+		}
+
+		// 不可达节点在最后一列，它指回入口的边成为引用时，标记画在右侧留白里，仍在画布之内
+		UCadenceArcGraph* Chain = MakeLayoutGraph(
+			Layout_A(), {Layout_A(), Layout_B(), Layout_C(), Layout_D(), Layout_E()});
+		AddLayoutEdge(Chain, 0, Layout_B());
+		AddLayoutEdge(Chain, 1, Layout_C());
+		AddLayoutEdge(Chain, 2, Layout_D());
+		AddLayoutEdge(Chain, 4, Layout_A()); // E 不可达，放在第 4 列
+		const FCadenceArcGraphLayout ChainLayout = BuildGraphLayout(*Chain, Three);
+		TestTrue(TEXT("Unreachable node's edge back to the entry is a reference"), ChainLayout.Edges[3].bIsReference);
+		ExpectLayoutInvariants(*this, ChainLayout);
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 		FCadenceArcLayoutEntrySpreadTest,
 		"CadenceArc.Editor.Layout.SharedTargetEntriesSpread",
 		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -926,6 +1031,31 @@ namespace CadenceArc::Editor::Tests
 			         LowerLeft->Direction.X < 0.0 && LowerLeft->Direction.Y > 0.0
 			         && FMath::IsNearlyEqual(LowerLeft->Direction.Size(), 1.0, 1.e-9));
 		}
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcLayoutHitTestTest,
+		"CadenceArc.Editor.Layout.HitTest",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcLayoutHitTestTest::RunTest(const FString& Parameters)
+	{
+		// A -> B：鼠标在节点上命中节点；在连线附近命中这条边；离得远什么都不命中
+		UCadenceArcGraph* Graph = MakeLayoutGraph(Layout_A(), {Layout_A(), Layout_B()});
+		AddLayoutEdge(Graph, 0, Layout_B());
+		const FCadenceArcGraphLayout Layout = BuildGraphLayout(*Graph);
+		const FCadenceArcLayoutNode& B = Layout.Nodes[1];
+		TestEqual(TEXT("Point inside B hits B"), HitTestNode(Layout, B.Position + B.Size * 0.5), 1);
+		TestEqual(TEXT("Point far away hits no node"), HitTestNode(Layout, FVector2D(-100.0, -100.0)), INDEX_NONE);
+
+		const TArray<FVector2D>& Path = Layout.Edges[0].Path;
+		const FVector2D OnPath = (Path[Path.Num() / 2] + Path[Path.Num() / 2 + 1]) * 0.5;
+		TestEqual(TEXT("Point on the drawn path hits the edge"), HitTestEdge(Layout, OnPath, 6.0), 0);
+		TestEqual(TEXT("Point just within tolerance hits the edge"),
+		          HitTestEdge(Layout, OnPath + FVector2D(0.0, 5.0), 6.0), 0);
+		TestEqual(TEXT("Point outside tolerance misses"), HitTestEdge(Layout, OnPath + FVector2D(0.0, 60.0), 6.0),
+		          INDEX_NONE);
 		return !HasAnyErrors();
 	}
 }

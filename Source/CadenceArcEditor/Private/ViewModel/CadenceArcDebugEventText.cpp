@@ -266,3 +266,34 @@ FCadenceArcDebugEventText FormatDebugEvent(const FCadenceArcDebugEvent& Event)
 	}
 	return Text;
 }
+
+FCadenceArcHistoryFocus MakeHistoryFocus(const FCadenceArcDebugEvent& Event)
+{
+	FCadenceArcHistoryFocus Focus;
+	Focus.Sequence = Event.Sequence;
+	const auto FocusRequest = [&Focus](const FCadenceArcActionRequest& Request)
+	{
+		Focus.SourceNode = Request.SourceActionTag;
+		Focus.TargetNode = Request.TargetActionTag;
+		Focus.InputTag = Request.InputTag;
+	};
+	if (Event.ProducedRequest.RequestId != 0)
+	{
+		FocusRequest(Event.ProducedRequest);
+		return Focus;
+	}
+	const bool bRequestCallback = Event.Operation == ECadenceArcDebugOperation::ActionStarted
+		|| Event.Operation == ECadenceArcDebugOperation::ActionRejected;
+	if (bRequestCallback && !Event.bFailed && Event.RequestBefore.RequestId != 0)
+	{
+		FocusRequest(Event.RequestBefore);
+		return Focus;
+	}
+	const bool bReturnsSomewhere = Event.Operation == ECadenceArcDebugOperation::Reset
+		|| Event.Operation == ECadenceArcDebugOperation::Initialize
+		|| Event.Operation == ECadenceArcDebugOperation::ActionCancelled
+		|| Event.Operation == ECadenceArcDebugOperation::ActionInterrupted;
+	Focus.SourceNode = bReturnsSomewhere && !Event.bFailed ? Event.CommittedAfter : Event.CommittedBefore;
+	Focus.InputTag = Event.InputTag;
+	return Focus;
+}

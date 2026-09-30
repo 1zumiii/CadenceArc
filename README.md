@@ -218,8 +218,11 @@ Select a PIE resolver (listed as `Actor @ World`) to see its graph and live stat
 - **branch focus**: the committed node's outgoing edges stay bright, nodes still reachable from it stay normal, and nodes the current path can no longer reach (without reset or interruption) are dimmed;
 - **preparatory edges** while a hold is pending: its source node's `Released` edges for that tag are drawn dashed with a charge fill that advances along the curve, and the tier a release would select right now is emphasized. A charge timeline shows press, charge start, full charge, and the automatic release deadline;
 - **Follow**: when the committed node changes, the view zooms out when needed (down to 0.6x) and scrolls so that the node and its direct successors are visible. Successors that still do not fit get clickable hints at the view edge.
+- **Browsing**: right- or middle-drag pans, Ctrl + wheel zooms around the cursor (0.3x-2x); either turns Follow off until it is checked again. Hovering a node highlights its edges; hovering an edge highlights both ends and shows `Source → Target · condition`.
+- **References, span ≥ N** (off by default, remembered per user): edges whose source and target columns differ by at least N are not drawn as long lines. The source gets a small tag naming the target (`→ SkillF`, or `↩ Root` for a jump back), and the target gets a short entry stub. Click the tag to scroll to the target, or the stub to scroll back to the source. Columns keep their meaning; these edges simply stop occupying channels and return lanes, and Follow only needs the tag, not the distant target, to be visible.
+- Selecting a row in Arc History outlines its node and edge in violet and scrolls it into view.
 
-The layout is a deterministic layered (Sugiyama-style) layout: DFS back edges close cycles and are routed as dashed lines through lanes below the graph; columns follow the longest path so forward edges always point right; long edges reserve a channel in every column they cross and are drawn as monotone curves that stay inside the free space between nodes. The layout is rebuilt from the asset each frame; it never modifies the asset. Viewport zoom and pan beyond Follow, hover highlighting, and folding of long chains are not implemented.
+The layout is a deterministic layered (Sugiyama-style) layout: DFS back edges close cycles and are routed as dashed lines through lanes below the graph; columns follow the longest path so forward edges always point right; long edges reserve a channel in every column they cross and are drawn as monotone curves that stay inside the free space between nodes. The layout is rebuilt from the asset each frame; it never modifies the asset. Folding or regrouping long chains is not implemented.
 
 ### Arc History
 
@@ -359,7 +362,7 @@ Tests live under `Source/CadenceArc/Private/Tests/` and build graphs in memory, 
 
 Editor-module tests live under `Source/CadenceArcEditor/Private/Tests/`:
 
-- `CadenceArcGraphLayoutTests.cpp` -- layering, back edges, return lanes, barycenter ordering, and geometry of the actual drawn paths (no path crosses an unrelated node, entries land on the target title, columns never overlap), plus follow zoom, follow scrolling, and off-screen hints;
+- `CadenceArcGraphLayoutTests.cpp` -- layering, back edges, return lanes, barycenter ordering, and geometry of the actual drawn paths (no path crosses an unrelated node, entries land on the target title, columns never overlap), reference tags and entry stubs, plus follow zoom, follow scrolling, off-screen hints, and hit testing;
 - `CadenceArcDebugViewTests.cpp` -- the live view model: committed and candidate mapping, parallel edges, preparatory edges and charge progress, branch distances, and read-only behavior;
 - `CadenceArcDebugEventTextTests.cpp` -- the Arc History text shown for successful and failed calls.
 
@@ -393,7 +396,7 @@ Redirects are verified for loading and enum lookup; round-trip compatibility of 
 1. Pause and directional input conditions, additional expiry policies, priorities, and reachability analysis.
 2. Optional execution adapters, including GAS.
 3. Input recording, replay, networking, and prediction research.
-4. Debugger follow-ups: zoom and pan, hover highlighting, and optional folding of long chains.
+4. Debugger follow-ups: local expansion of node groups for very large graphs.
 
 ## Requirements
 

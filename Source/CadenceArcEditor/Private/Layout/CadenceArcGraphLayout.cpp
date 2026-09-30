@@ -8,6 +8,7 @@
 // 3. 跨多列的边在每个中间列放一个通道（不绘制的占位），和真实节点一起按重心排序以减少交叉；
 // 4. 纵坐标按连线的端口位置双向对齐，每列保持顺序和最小间距（保序回归），通道同样占高度；
 // 5. 目标列不在源列右侧的边分配底部通道；最后生成每条边的实际绘制折线。
+// 打开引用标记（ReferenceMinSpan）时，跨列多的边在第 2 步之后改成引用：不占通道、不参与排序，只画两端的短标记。
 // 路径合法性来自结构：穿过中间列时是通道里的水平线，换高度的 S 曲线只出现在两列之间的空隙里，
 // 回边和自环的竖线也只在空隙里，所以线不会压在无关节点上。
 namespace
@@ -331,6 +332,22 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 		NumReachableColumns = FMath::Max(NumReachableColumns, Node.Column + 1);
 	}
 
+	// 引用边：列号差不小于阈值的边（不可达节点按它们稍后所在的最后一列算）。它们仍参与上面的列号计算，
+	// 只是不再占通道，也不参与排序和纵向对齐。自环的列号差为 0，坏目标没有目标，都不会成为引用。
+	if (Params.ReferenceMinSpan > 0)
+	{
+		const auto FinalColumn = [&Layout, NumReachableColumns](const int32 NodeIndex)
+		{
+			const FCadenceArcLayoutNode& Node = Layout.Nodes[NodeIndex];
+			return Node.bReachable ? Node.Column : NumReachableColumns;
+		};
+		for (FCadenceArcLayoutEdge& Edge : Layout.Edges)
+		{
+			Edge.bIsReference = !Edge.IsBrokenTarget() && FMath::Abs(
+				FinalColumn(Edge.TargetNodeIndex) - FinalColumn(Edge.SourceNodeIndex)) >= Params.ReferenceMinSpan;
+		}
+	}
+
 	// 3. 格子：可达的真实节点，加上长边在每个中间列的通道；相邻列之间的连线
 	TArray<FLayerItem> Items;
 	TArray<int32> ItemOfNode;
@@ -357,7 +374,7 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 		{
 			Items[ItemOfNode[Edge.SourceNodeIndex]].bHasSelfLoop = true;
 		}
-		if (!IsForwardEdge(Edge, Layout.Nodes))
+		if (!IsForwardEdge(Edge, Layout.Nodes) || Edge.bIsReference)
 		{
 			continue;
 		}
@@ -556,7 +573,7 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 	for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
 	{
 		const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
-		if (Edge.TargetNodeIndex != INDEX_NONE && Edge.TargetNodeIndex != Edge.SourceNodeIndex
+		if (Edge.TargetNodeIndex != INDEX_NONE && Edge.TargetNodeIndex != Edge.SourceNodeIndex && !Edge.bIsReference
 			&& Layout.Nodes[Edge.TargetNodeIndex].Column <= Layout.Nodes[Edge.SourceNodeIndex].Column)
 		{
 			ReturnEdges.Add(EdgeIndex);
@@ -601,6 +618,10 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 	const auto ApproachY = [&](const int32 EdgeIndex)
 	{
 		const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
+		if (Edge.bIsReference)
+		{
+			return PortPoint(Edge).Y; // 接入线是水平的，按源端口的高度排
+		}
 		if (Edge.ReturnLane != INDEX_NONE)
 		{
 			return LaneY(Edge.ReturnLane);
@@ -663,6 +684,16 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 			continue;
 		}
 		const FVector2D End = EntryPoints[EdgeIndex];
+		if (Edge.bIsReference)
+		{
+			// 引用边：端口引出一小段接到标记；目标一侧只在左侧空隙里画一小段接入线。
+			// 标记和接入线都落在列间空隙里（标记右侧、接入线左侧都不到相邻列），不会压在节点上。
+			const FVector2D Min(Start.X + Params.ReferenceGap, Start.Y - Params.ReferenceHeight * 0.5);
+			Edge.ReferenceBox = FBox2D(Min, Min + FVector2D(Params.ReferenceWidth, Params.ReferenceHeight));
+			Edge.Path = {Start, FVector2D(Min.X, Start.Y)};
+			Edge.EntryStub = {End - FVector2D(Params.ReferenceEntryStub, 0.0), End};
+			continue;
+		}
 		const FCadenceArcLayoutNode& Source = Layout.Nodes[Edge.SourceNodeIndex];
 		if (Edge.SourceNodeIndex == Edge.TargetNodeIndex)
 		{
@@ -727,7 +758,12 @@ FCadenceArcGraphLayout BuildGraphLayout(const UCadenceArcGraph& Graph, const FCa
 	}
 
 	const double ReturnBottom = Layout.NumReturnLanes > 0 ? LaneY(Layout.NumReturnLanes - 1) : ContentBottom;
-	const double RightMargin = FMath::Max3(Params.BrokenStubLength, Params.LoopMargin, Params.ReturnStub + 9.f) + 16.0;
+	double RightMargin = FMath::Max3(Params.BrokenStubLength, Params.LoopMargin, Params.ReturnStub + 9.f) + 16.0;
+	if (Layout.Edges.ContainsByPredicate([](const FCadenceArcLayoutEdge& Edge) { return Edge.bIsReference; }))
+	{
+		// 最后一列（例如不可达节点）的引用标记画在右侧留白里
+		RightMargin = FMath::Max(RightMargin, Params.ReferenceGap + Params.ReferenceWidth + 8.0);
+	}
 	Layout.Size = FVector2D(
 		ColumnX(Layout.NumColumns - 1) + Params.NodeWidth + RightMargin + Params.Padding,
 		FMath::Max(ContentBottom, ReturnBottom) + Params.Padding);
@@ -794,4 +830,47 @@ TOptional<FCadenceArcOffscreenHint> ComputeOffscreenHint(const FBox2D& Viewport,
 		FMath::Clamp(Center.Y, Viewport.Min.Y + Inset, FMath::Max(Viewport.Min.Y + Inset, Viewport.Max.Y - Inset)));
 	Hint.Direction = (Center - Hint.Anchor).GetSafeNormal();
 	return Hint;
+}
+
+int32 HitTestNode(const FCadenceArcGraphLayout& Layout, const FVector2D& Point)
+{
+	for (const FCadenceArcLayoutNode& Node : Layout.Nodes)
+	{
+		if (FBox2D(Node.Position, Node.Position + Node.Size).IsInside(Point))
+		{
+			return Node.NodeIndex;
+		}
+	}
+	return INDEX_NONE;
+}
+
+int32 HitTestEdge(const FCadenceArcGraphLayout& Layout, const FVector2D& Point, const double Tolerance)
+{
+	int32 Best = INDEX_NONE;
+	double BestDistance = Tolerance;
+	const auto Consider = [&Best, &BestDistance](const int32 EdgeIndex, const double Distance)
+	{
+		if (Distance < BestDistance || (Distance == BestDistance && Best == INDEX_NONE))
+		{
+			Best = EdgeIndex;
+			BestDistance = Distance;
+		}
+	};
+	for (int32 EdgeIndex = 0; EdgeIndex < Layout.Edges.Num(); ++EdgeIndex)
+	{
+		const FCadenceArcLayoutEdge& Edge = Layout.Edges[EdgeIndex];
+		if (Edge.bIsReference && Edge.ReferenceBox.IsInside(Point))
+		{
+			Consider(EdgeIndex, 0.0);
+		}
+		for (const TArray<FVector2D>* Path : {&Edge.Path, &Edge.EntryStub})
+		{
+			for (int32 Index = 1; Index < Path->Num(); ++Index)
+			{
+				Consider(EdgeIndex, FMath::Sqrt(FMath::PointDistToSegmentSquared(
+					FVector(Point, 0.0), FVector((*Path)[Index - 1], 0.0), FVector((*Path)[Index], 0.0))));
+			}
+		}
+	}
+	return Best;
 }

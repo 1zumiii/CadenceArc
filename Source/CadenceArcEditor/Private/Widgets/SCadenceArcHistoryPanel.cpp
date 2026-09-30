@@ -65,6 +65,8 @@ void SCadenceArcHistoryPanel::Construct(const FArguments& InArgs)
 				.OnClicked_Lambda([this]()
 				{
 					ClearedThrough = LastSequence;
+					ListView->ClearSelection();
+					CadenceArc::Editor::DebuggerSelection::SetHistoryFocus(FCadenceArcHistoryFocus());
 					AllRows.Reset();
 					RebuildVisibleRows();
 					return FReply::Handled();
@@ -77,7 +79,8 @@ void SCadenceArcHistoryPanel::Construct(const FArguments& InArgs)
 			SAssignNew(ListView, SListView<TSharedPtr<FRow>>)
 			.ListItemsSource(&VisibleRows)
 			.OnGenerateRow(this, &SCadenceArcHistoryPanel::MakeRowWidget)
-			.SelectionMode(ESelectionMode::None)
+			.SelectionMode(ESelectionMode::Single)
+			.OnSelectionChanged(this, &SCadenceArcHistoryPanel::OnRowSelected)
 		]
 	];
 
@@ -124,6 +127,7 @@ EActiveTimerReturnType SCadenceArcHistoryPanel::OnRefreshTick(double CurrentTime
 		const TSharedPtr<FRow> Row = MakeShared<FRow>();
 		Row->Sequence = Event.Sequence;
 		Row->Text = FormatDebugEvent(Event);
+		Row->Focus = MakeHistoryFocus(Event);
 		if (Row->Text.Time.IsEmpty() && World)
 		{
 			Row->Text.Time = FString::Printf(TEXT("~%.2fs"), World->GetTimeSeconds());
@@ -139,8 +143,20 @@ EActiveTimerReturnType SCadenceArcHistoryPanel::OnRefreshTick(double CurrentTime
 	return EActiveTimerReturnType::Continue;
 }
 
+void SCadenceArcHistoryPanel::OnRowSelected(TSharedPtr<FRow> Row, ESelectInfo::Type SelectInfo)
+{
+	// 点中一行：在 Arc Debugger 的图上高亮它对应的边或节点；取消选择就清掉高亮
+	CadenceArc::Editor::DebuggerSelection::SetHistoryFocus(
+		Row.IsValid() && Row->Sequence != 0 ? Row->Focus : FCadenceArcHistoryFocus());
+}
+
 void SCadenceArcHistoryPanel::ResetRows()
 {
+	CadenceArc::Editor::DebuggerSelection::SetHistoryFocus(FCadenceArcHistoryFocus());
+	if (ListView.IsValid())
+	{
+		ListView->ClearSelection();
+	}
 	AllRows.Reset();
 	LastSequence = 0;
 	ClearedThrough = 0;

@@ -130,6 +130,55 @@ namespace CadenceArc::Editor::Tests
 		}
 		return !HasAnyErrors();
 	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcHistoryFocusTest,
+		"CadenceArc.Editor.History.FocusOnGraph",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcHistoryFocusTest::RunTest(const FString& Parameters)
+	{
+		// 产生了候选：指向那条边
+		{
+			FCadenceArcDebugEvent Event = MakeTextEvent(ECadenceArcDebugOperation::SubmitInput);
+			Event.Sequence = 12;
+			Event.ProducedRequest.RequestId = 5;
+			Event.ProducedRequest.SourceActionTag = Text_Root();
+			Event.ProducedRequest.TargetActionTag = Text_Light01();
+			Event.ProducedRequest.InputTag = Text_Light();
+			const FCadenceArcHistoryFocus Focus = MakeHistoryFocus(Event);
+			TestEqual(TEXT("Focus keeps the sequence"), Focus.Sequence, uint64{12});
+			TestTrue(TEXT("Produced request focuses its edge"), Focus.SourceNode == Text_Root()
+			         && Focus.TargetNode == Text_Light01() && Focus.InputTag == Text_Light());
+		}
+		// Started：指向调用前待开始的那条边
+		{
+			FCadenceArcDebugEvent Event = MakeTextEvent(ECadenceArcDebugOperation::ActionStarted);
+			Event.RequestBefore.RequestId = 5;
+			Event.RequestBefore.SourceActionTag = Text_Root();
+			Event.RequestBefore.TargetActionTag = Text_Light01();
+			Event.RequestBefore.InputTag = Text_Light();
+			TestTrue(TEXT("Started focuses the started edge"), MakeHistoryFocus(Event).TargetNode == Text_Light01());
+		}
+		// 没对上边的失败：指向发生时所在的节点
+		{
+			FCadenceArcDebugEvent Event = MakeTextEvent(ECadenceArcDebugOperation::SubmitInput);
+			Event.CommittedBefore = Text_Light01();
+			Event.InputTag = Text_Heavy();
+			Event.bFailed = true;
+			const FCadenceArcHistoryFocus Focus = MakeHistoryFocus(Event);
+			TestTrue(TEXT("Failure focuses the node it happened at"), Focus.SourceNode == Text_Light01()
+			         && !Focus.TargetNode.IsValid());
+		}
+		// Reset：指向回到的入口
+		{
+			FCadenceArcDebugEvent Event = MakeTextEvent(ECadenceArcDebugOperation::Reset);
+			Event.CommittedBefore = Text_Light01();
+			Event.CommittedAfter = Text_Root();
+			TestTrue(TEXT("Reset focuses the entry"), MakeHistoryFocus(Event).SourceNode == Text_Root());
+		}
+		return !HasAnyErrors();
+	}
 }
 
 #endif

@@ -51,6 +51,19 @@ class SCadenceArcDebuggerPanel : public SCompoundWidget
 	void RequestFollow();
 	void UpdateOffscreenHints();
 	void ScrollNodeIntoView(int32 NodeIndex);
+
+	// 手动浏览：画布把手势交给这里改滚动区和缩放
+	void PanBy(const FVector2D& ScreenDelta);
+	void ZoomAt(float WheelDelta, const FVector2D& CanvasLocal);
+
+	// 引用标记开关和跨列阈值，记在编辑器的个人项目配置里
+	bool bUseReferences = false;
+	int32 ReferenceMinSpan = 3;
+	void ApplyReferenceSetting(bool bSave);
+
+	// Arc History 点中的记录在图上的高亮
+	void ApplyHistoryFocus();
+	uint64 AppliedFocusSequence = 0;
 	void RefreshSelectedResolver();
 	FText GetStateText() const;
 	FText GetRequestText() const;
