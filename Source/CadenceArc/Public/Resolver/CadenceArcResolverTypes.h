@@ -23,6 +23,10 @@ struct CADENCEARC_API FCadenceArcInputEvent
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Resolver")
 	double HeldDurationSeconds = 0.0;
 
+	// 输入发生时的事实，随事件一起保存；解析时与宿主的持久上下文取并集。
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Resolver")
+	FGameplayTagContainer ContextTags;
+
 	bool IsValid() const
 	{
 		if (InputTag.IsValid() && IsValidTimestamp() && IsValidHeldDuration() && IsValidInputPhase())

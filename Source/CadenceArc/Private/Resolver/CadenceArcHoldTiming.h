@@ -42,7 +42,7 @@ namespace CadenceArc::HoldTiming
 		TArray<FStageCrossing>& OutCrossings
 	);
 
-	// 从该 Tag 的全部 Released 边推导最高档门槛 T满：唯一一条无上限边的下限。
+	// 从该 Tag 的全部 Released 边推导最高档门槛 T满：所有无上限分支共有的正数下限。
 	// 失败时 OutChargeFullSeconds 置 0 并返回 false，调用方返回 InvalidGraphConfiguration。
 	bool DeriveChargeFullSeconds(
 		const TArray<FCadenceArcTransition>& ReleasedEdges, double& OutChargeFullSeconds

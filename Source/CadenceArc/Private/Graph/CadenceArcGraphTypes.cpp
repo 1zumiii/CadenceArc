@@ -20,6 +20,27 @@ namespace
 		return (!bHasMaxA || MinB < A.DurationRange.MaxHeldDurationSecondsExclusive)
 			&& (!bHasMaxB || MinA < B.DurationRange.MaxHeldDurationSecondsExclusive);
 	}
+
+	bool DoPauseRangesOverlap(const FCadenceArcTransition& A, const FCadenceArcTransition& B)
+	{
+		const double MinA = A.bUsePauseRange ? A.PauseRange.MinHeldDurationSeconds : 0.0;
+		const double MinB = B.bUsePauseRange ? B.PauseRange.MinHeldDurationSeconds : 0.0;
+		return (!A.bUsePauseRange || !A.PauseRange.bHasMaxHeldDuration
+				|| MinB < A.PauseRange.MaxHeldDurationSecondsExclusive)
+			&& (!B.bUsePauseRange || !B.PauseRange.bHasMaxHeldDuration
+				|| MinA < B.PauseRange.MaxHeldDurationSecondsExclusive);
+	}
+
+	bool CanConditionsCoexist(const FCadenceArcTransition& A, const FCadenceArcTransition& B)
+	{
+		FGameplayTagContainer Required = A.RequiredContextTags;
+		Required.AppendTags(B.RequiredContextTags);
+		FGameplayTagContainer Blocked = A.BlockedContextTags;
+		Blocked.AppendTags(B.BlockedContextTags);
+		// 必须按 Required -> Blocked 的方向做层级匹配：要求子 Tag、禁止父 Tag 才矛盾。
+		// 要求父 Tag、禁止某个子 Tag 仍可成立，不能误判为冲突。
+		return !Required.HasAny(Blocked);
+	}
 }
 
 bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
@@ -50,6 +71,14 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 		{
 			AddError(FString::Printf(TEXT("Transition at index %d has an invalid TargetActionTag."), Index));
 		}
+		if (!CanConditionsCoexist(Edge, Edge))
+		{
+			AddError(FString::Printf(TEXT("Transition at index %d has contradictory required and blocked context tags."), Index));
+		}
+		if (Edge.bUsePauseRange && !Edge.PauseRange.IsValid())
+		{
+			AddError(FString::Printf(TEXT("Transition at index %d has an invalid pause range."), Index));
+		}
 		if (!IsKnownPhase(Edge.InputPhase))
 		{
 			AddError(FString::Printf(TEXT("Transition at index %d has an invalid InputPhase."), Index));
@@ -71,6 +100,11 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 			const FCadenceArcTransition& Previous = Transitions[PreviousIndex];
 			if (!Edge.InputTag.IsValid() || Edge.InputTag != Previous.InputTag
 				|| Edge.InputPhase != Previous.InputPhase
+				|| Edge.Priority != Previous.Priority
+				|| (Edge.bUsePauseRange && !Edge.PauseRange.IsValid())
+				|| (Previous.bUsePauseRange && !Previous.PauseRange.IsValid())
+				|| !DoPauseRangesOverlap(Previous, Edge)
+				|| !CanConditionsCoexist(Previous, Edge)
 				|| (Previous.bUseDurationRange && !Previous.DurationRange.IsValid()))
 			{
 				continue;
@@ -78,7 +112,7 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 			if (Edge.InputPhase == ECadenceArcInputPhase::Pressed || DoReleasedRangesOverlap(Previous, Edge))
 			{
 				AddError(FString::Printf(
-					TEXT("Transitions at indices %d and %d overlap for InputTag '%s' and InputPhase %d."),
+					TEXT("Transitions at indices %d and %d overlap at equal priority for InputTag '%s' and InputPhase %d. Raise one priority or make their context/pause conditions mutually exclusive."),
 					PreviousIndex, Index, *Edge.InputTag.ToString(), static_cast<int32>(Edge.InputPhase)));
 			}
 		}
@@ -107,6 +141,7 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 
 		int32 FullRangeCount = 0;
 		double FullDuration = 0.0;
+		bool bConsistentFullDuration = true;
 		for (int32 EdgeIndex = 0; EdgeIndex < Transitions.Num(); ++EdgeIndex)
 		{
 			const FCadenceArcTransition& Edge = Transitions[EdgeIndex];
@@ -123,6 +158,10 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 			}
 			if (Edge.DurationRange.IsValid() && !Edge.DurationRange.bHasMaxHeldDuration)
 			{
+				if (FullRangeCount > 0 && FullDuration != Edge.DurationRange.MinHeldDurationSeconds)
+				{
+					bConsistentFullDuration = false;
+				}
 				++FullRangeCount;
 				FullDuration = Edge.DurationRange.MinHeldDurationSeconds;
 			}
@@ -130,10 +169,11 @@ bool FCadenceArcNode::IsValidTransition(TArray<FText>* OutErrors) const
 
 		// 无上限尾段的下限就是最高档达标时间；普通边、中间档以及连续覆盖都不是必需的。
 		// 没有整体计时配置时，上述限制不适用，短按单边和有空档的Released分支仍然合法。
-		if (FullRangeCount != 1 || FullDuration <= 0.0)
+		// 条件分支可以共享最高档，但自动释放仍必须有唯一的、与上下文无关的时间点。
+		if (FullRangeCount == 0 || !bConsistentFullDuration || FullDuration <= 0.0)
 		{
 			AddError(FString::Printf(
-				TEXT("HoldChargeConfigs at index %d for InputTag '%s' requires exactly one unbounded Released range with a positive minimum."),
+				TEXT("HoldChargeConfigs at index %d for InputTag '%s' requires unbounded Released ranges sharing one positive minimum."),
 				ConfigIndex, *Config.InputTag.ToString()));
 		}
 		else if (Config.IsValid())

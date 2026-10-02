@@ -20,6 +20,9 @@ namespace CadenceArc::Tests
 	UE_DEFINE_GAMEPLAY_TAG(Action_Finisher03, "CadenceArc.Automation.Action.Finisher03");
 	UE_DEFINE_GAMEPLAY_TAG(Input_Light, "CadenceArc.Automation.Input.Light");
 	UE_DEFINE_GAMEPLAY_TAG(Input_Heavy, "CadenceArc.Automation.Input.Heavy");
+	UE_DEFINE_GAMEPLAY_TAG(Context_Forward, "CadenceArc.Automation.Context.Forward");
+	UE_DEFINE_GAMEPLAY_TAG(Context_Air, "CadenceArc.Automation.Context.Air");
+	UE_DEFINE_GAMEPLAY_TAG(Context_AirJump, "CadenceArc.Automation.Context.Air.Jump");
 
 	FCadenceArcNode& AddNode(UCadenceArcGraph* Graph, const FGameplayTag& ActionTag)
 	{

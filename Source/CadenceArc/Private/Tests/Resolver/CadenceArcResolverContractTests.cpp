@@ -425,7 +425,7 @@ namespace CadenceArc::Tests
 		SecondOverlap.InputPhase = ECadenceArcInputPhase::Released;
 		ExpectInvalidInitialization(
 			TEXT("Overlapping released ranges are rejected by shared validation"), OverlapGraph,
-			TEXT("Node at index 0: Node 'CadenceArc.Automation.Action.Root': Transitions at indices 0 and 1 overlap for InputTag 'CadenceArc.Automation.Input.Light' and InputPhase 1."));
+			TEXT("Node at index 0: Node 'CadenceArc.Automation.Action.Root': Transitions at indices 0 and 1 overlap at equal priority for InputTag 'CadenceArc.Automation.Input.Light' and InputPhase 1. Raise one priority or make their context/pause conditions mutually exclusive."));
 
 		UCadenceArcGraph* InvalidConfigGraph = MakeValidGraph();
 		InvalidConfigGraph->Nodes[0].Transitions.Reset();

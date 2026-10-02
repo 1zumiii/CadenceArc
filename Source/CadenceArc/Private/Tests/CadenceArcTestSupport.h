@@ -39,6 +39,10 @@ namespace CadenceArc::Tests
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Finisher03);
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Light);
 	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Heavy);
+	// 转移条件用的上下文 Tag（Phase 8）。Context_AirJump 是 Context_Air 的子 Tag，用来验证层级匹配。
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Context_Forward);
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Context_Air);
+	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Context_AirJump);
 
 	struct FExpectedResolution
 	{

@@ -4,9 +4,13 @@
 #include "Misc/DataValidation.h"
 #endif
 
-bool UCadenceArcGraph::ValidateGraph(TArray<FText>& OutErrors) const
+bool UCadenceArcGraph::ValidateGraph(TArray<FText>& OutErrors, TArray<FText>* OutWarnings) const
 {
 	OutErrors.Reset();
+	if (OutWarnings)
+	{
+		OutWarnings->Reset();
+	}
 	const auto AddError = [&OutErrors](const FString& Message)
 	{
 		OutErrors.Add(FText::FromString(Message));
@@ -71,6 +75,36 @@ bool UCadenceArcGraph::ValidateGraph(TArray<FText>& OutErrors) const
 			}
 		}
 	}
+	// 只做拓扑可达性，不猜测宿主未来会提供哪些 Tag；环和自环通过已访问集合终止。
+	// 仅在入口存在时报告，最终按 Nodes 顺序输出，避免哈希容器影响诊断顺序。
+	if (OutWarnings && TagMap.Contains(EntryActionTag))
+	{
+		TSet<FGameplayTag> Reachable;
+		TArray<FGameplayTag> Pending;
+		Reachable.Add(EntryActionTag);
+		Pending.Add(EntryActionTag);
+		for (int32 Cursor = 0; Cursor < Pending.Num(); ++Cursor)
+		{
+			const FCadenceArcNode& Node = Nodes[TagMap.FindChecked(Pending[Cursor])];
+			for (const FCadenceArcTransition& Edge : Node.Transitions)
+			{
+				if (TagMap.Contains(Edge.TargetActionTag) && !Reachable.Contains(Edge.TargetActionTag))
+				{
+					Reachable.Add(Edge.TargetActionTag);
+					Pending.Add(Edge.TargetActionTag);
+				}
+			}
+		}
+		for (int32 Index = 0; Index < Nodes.Num(); ++Index)
+		{
+			if (Nodes[Index].ActionTag.IsValid() && !Reachable.Contains(Nodes[Index].ActionTag))
+			{
+				OutWarnings->Add(FText::FromString(FString::Printf(
+					TEXT("Node '%s' at index %d is unreachable from entry '%s'."),
+					*Nodes[Index].ActionTag.ToString(), Index, *EntryActionTag.ToString())));
+			}
+		}
+	}
 	return OutErrors.IsEmpty();
 }
 
@@ -88,10 +122,15 @@ const FCadenceArcNode* UCadenceArcGraph::FindAction(const FGameplayTag& ActionTa
 EDataValidationResult UCadenceArcGraph::IsDataValid(FDataValidationContext& Context) const
 {
 	TArray<FText> Errors;
-	const bool bValid = ValidateGraph(Errors);
+	TArray<FText> Warnings;
+	const bool bValid = ValidateGraph(Errors, &Warnings);
 	for (const FText& Error : Errors)
 	{
 		Context.AddError(Error);
+	}
+	for (const FText& Warning : Warnings)
+	{
+		Context.AddWarning(Warning);
 	}
 	return CombineDataValidationResults(
 		Super::IsDataValid(Context), bValid ? EDataValidationResult::Valid : EDataValidationResult::Invalid

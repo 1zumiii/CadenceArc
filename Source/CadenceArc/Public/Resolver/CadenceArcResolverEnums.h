@@ -73,8 +73,12 @@ enum class ECadenceArcResolutionReason : uint8
 	InputTimeAdvanceRequired,
 	// 动作正常完成，按住资格仍保留，等待手动或自动释放。
 	WaitingForRelease,
-	// 运行时发现图或资格配置副本无法解释本次输入（含多条候选边）。
-	InvalidGraphConfiguration
+	// 运行时发现图或资格配置副本非法；选边时最高优先级打平使用 AmbiguousTransition。
+	InvalidGraphConfiguration,
+	// Tag、阶段和按住时长匹配，但上下文或停顿条件全部不满足。
+	ConditionNotMet,
+	// 满足条件的边中，最高优先级仍有多条；不按数组顺序猜测。
+	AmbiguousTransition
 };
 
 UENUM(BlueprintType)

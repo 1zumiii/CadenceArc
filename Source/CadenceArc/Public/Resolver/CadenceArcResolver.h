@@ -55,6 +55,17 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCadenceArcGraph> Graph;
+	// 宿主拥有的持续事实；连招重置、重新初始化和生命周期回调均不清空它。
+	UPROPERTY(Transient)
+	FGameplayTagContainer ContextTags;
+	// 负数表示没有有效停顿起点，不得把“尚未 Completed”当成停顿 0 秒。
+	UPROPERTY(Transient)
+	double LastCompletionTimestampSeconds = -1.0;
+
+	FGameplayTagContainer MakeResolutionContext(const FCadenceArcInputEvent& Event) const;
+	double GetPauseDurationSeconds(const FCadenceArcInputEvent& Event) const;
+	void RecordCompletionTimestamp(double CompletionTimestampSeconds);
+
 	UPROPERTY(Transient)
 	FGameplayTag CurrentActionTag;
 	UPROPERTY(Transient)
@@ -155,6 +166,13 @@ private:
 #endif
 
 public:
+	// 只替换上下文，不推进时间，也不改变请求、输入槽或连招状态。
+	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
+	void SetContextTags(const FGameplayTagContainer& InContextTags) { ContextTags = InContextTags; }
+
+	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
+	FGameplayTagContainer GetContextTags() const { return ContextTags; }
+
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Resolver")
 	ECadenceArcResolverInitResult Initialize(UCadenceArcGraph* InGraph);
 

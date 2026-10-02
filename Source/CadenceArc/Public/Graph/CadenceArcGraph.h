@@ -24,8 +24,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	double MaxBufferedInputAgeSeconds = 0.0;
 
-	// Runtime和编辑器共用的只读校验入口；每次先清空OutErrors。
-	bool ValidateGraph(TArray<FText>& OutErrors) const;
+	// Runtime和编辑器共用的只读校验入口；每次清空输出，警告不影响返回的合法性。
+	bool ValidateGraph(TArray<FText>& OutErrors, TArray<FText>* OutWarnings = nullptr) const;
 	
 	// 检查某个节点是否存在于图中；不检查节点内部配置
 	bool ContainsAction(const FGameplayTag& GameplayTag) const;

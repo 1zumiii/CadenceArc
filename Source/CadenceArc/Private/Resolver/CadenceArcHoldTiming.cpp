@@ -121,11 +121,8 @@ namespace CadenceArc::HoldTiming
 			}
 			if (!Edge.bUseDurationRange)
 			{
-				// 未启用范围等价于 [0, 无上限)：算作无上限档，但下限为 0。
-				// 启用整体计时配置时这种边不合法，下面的 Candidate > 0 检查会拦住它。
-				++UnboundedCount;
-				Candidate = 0.0;
-				continue;
+				// 整体计时配置要求每条 Released 边都有显式时长范围。
+				return false;
 			}
 			if (!Edge.DurationRange.IsValid())
 			{
@@ -133,13 +130,17 @@ namespace CadenceArc::HoldTiming
 			}
 			if (!Edge.DurationRange.bHasMaxHeldDuration)
 			{
+				if (UnboundedCount > 0 && Candidate != Edge.DurationRange.MinHeldDurationSeconds)
+				{
+					return false;
+				}
 				++UnboundedCount;
 				Candidate = Edge.DurationRange.MinHeldDurationSeconds;
 			}
 		}
 
-		// 最高档必须恰好一条，且门槛为正：否则"蓄满"没有确定含义。
-		if (UnboundedCount != 1 || !(Candidate > 0.0) || !FMath::IsFinite(Candidate))
+		// 最高档可以有多个条件分支，但必须共用正数门槛，计时不依赖求值上下文。
+		if (UnboundedCount == 0 || !(Candidate > 0.0) || !FMath::IsFinite(Candidate))
 		{
 			return false;
 		}

@@ -26,6 +26,23 @@ struct CADENCEARC_API FCadenceArcTransition
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
 	FCadenceArcHeldDurationRange DurationRange;
 
+	// 条件满足后按整数优先级选择；最高优先级打平时拒绝，不依赖数组顺序。
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
+	int32 Priority = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
+	FGameplayTagContainer RequiredContextTags;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
+	FGameplayTagContainer BlockedContextTags;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
+	bool bUsePauseRange = false;
+
+	// 复用左闭右开区间；这里的时长是输入距最近一次有效 Completed 的时间。
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph", meta=(EditCondition="bUsePauseRange"))
+	FCadenceArcHeldDurationRange PauseRange;
+
 	// 这条边能否接受该输入事件：Tag 与 Phase 必须一致，Released 边再比对时长范围。
 	// 图校验已禁止 Pressed 边启用范围，所以 Pressed 只比 Tag 和 Phase。
 	bool Matches(const FCadenceArcInputEvent& Event) const;
@@ -45,7 +62,11 @@ struct CADENCEARC_API FCadenceArcTransition
 				&& InputPhase == Others.InputPhase && bUseDurationRange == Others.bUseDurationRange
 				&& DurationRange == Others.DurationRange;
 		}
-		return IsEqual;
+		return IsEqual && Priority == Others.Priority
+			&& RequiredContextTags == Others.RequiredContextTags
+			&& BlockedContextTags == Others.BlockedContextTags
+			&& bUsePauseRange == Others.bUsePauseRange
+			&& (!bUsePauseRange || PauseRange == Others.PauseRange);
 	}
 };
 

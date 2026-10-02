@@ -17,6 +17,7 @@ namespace
 		case ECadenceArcResolutionReason::RequestPending:
 		case ECadenceArcResolutionReason::BufferWindowClosed:
 		case ECadenceArcResolutionReason::NoMatchingTransition:
+		case ECadenceArcResolutionReason::ConditionNotMet:
 		case ECadenceArcResolutionReason::NoBufferedInput:
 		case ECadenceArcResolutionReason::Expired:
 		case ECadenceArcResolutionReason::WaitingForRelease:
@@ -25,6 +26,26 @@ namespace
 			return ECadenceArcResolutionCategory::Rejected; // 新增原因默认悲观
 		}
 	}
+}
+
+FGameplayTagContainer UCadenceArcResolver::MakeResolutionContext(const FCadenceArcInputEvent& Event) const
+{
+	FGameplayTagContainer MergedTags = ContextTags;
+	MergedTags.AppendTags(Event.ContextTags);
+	return MergedTags;
+}
+
+double UCadenceArcResolver::GetPauseDurationSeconds(const FCadenceArcInputEvent& Event) const
+{
+	return LastCompletionTimestampSeconds >= 0.0
+		? Event.TimestampSeconds - LastCompletionTimestampSeconds : -1.0;
+}
+
+void UCadenceArcResolver::RecordCompletionTimestamp(const double CompletionTimestampSeconds)
+{
+	// 普通缓冲保留原有“握手成功、消费失败”的时间错误契约；非法时间不能成为停顿起点。
+	LastCompletionTimestampSeconds = FMath::IsFinite(CompletionTimestampSeconds)
+		&& CompletionTimestampSeconds >= 0.0 ? CompletionTimestampSeconds : -1.0;
 }
 
 ECadenceArcResolverInitResult UCadenceArcResolver::InitializeImpl(UCadenceArcGraph* InGraph)
@@ -48,7 +69,14 @@ ECadenceArcResolverInitResult UCadenceArcResolver::InitializeImpl(UCadenceArcGra
 	{
 		return ECadenceArcResolverInitResult::EntryNodeNotFound;
 	}
-	if (TArray<FText> ValidationErrors; !InGraph->ValidateGraph(ValidationErrors))
+	TArray<FText> ValidationErrors;
+	TArray<FText> ValidationWarnings;
+	const bool bValidGraph = InGraph->ValidateGraph(ValidationErrors, &ValidationWarnings);
+	for (const FText& Warning : ValidationWarnings)
+	{
+		UE_LOG(LogCadenceArc, Warning, TEXT("Graph validation warning: %s"), *Warning.ToString());
+	}
+	if (!bValidGraph)
 	{
 		// print validation errors to log for debugging
 		for (const FText& Error : ValidationErrors)
@@ -58,6 +86,7 @@ ECadenceArcResolverInitResult UCadenceArcResolver::InitializeImpl(UCadenceArcGra
 		return ECadenceArcResolverInitResult::InvalidGraph;
 	}
 	Graph = InGraph;
+	LastCompletionTimestampSeconds = -1.0;
 	State = ECadenceArcResolverState::Ready;
 	CommitNode(InGraph->EntryActionTag); // 新的执行上下文：旧资格即使残留也不再匹配
 	OutstandingRequest = FCadenceArcActionRequest{};
@@ -98,7 +127,9 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::SubmitInputImpl(const FCadenceArcI
 	{
 	case ECadenceArcResolverState::Ready:
 		{
-			const auto Match = CadenceArc::GraphQuery::FindUniqueTransition(*Graph, CurrentActionTag, InInputEvent);
+			const auto Match = CadenceArc::GraphQuery::FindUniqueTransition(
+				*Graph, CurrentActionTag, InInputEvent, MakeResolutionContext(InInputEvent),
+				GetPauseDurationSeconds(InInputEvent));
 			if (Match.Reason == ECadenceArcResolutionReason::None)
 			{
 				// 只有真正被接受的输入才替换槽：解析失败时 Holding 资格原样保留
@@ -248,6 +279,7 @@ ECadenceArcHandshakeResult UCadenceArcResolver::EndAction(
 	if (bReturnToEntry)
 	{
 		CommitNode(Graph->EntryActionTag);
+		LastCompletionTimestampSeconds = -1.0;
 	}
 	ClearInputSlot();
 	ResetBufferWindow();
@@ -330,6 +362,7 @@ ECadenceArcResolverResetResult UCadenceArcResolver::ResetImpl()
 	{
 	case ECadenceArcResolverState::Ready:
 		OutstandingRequest = FCadenceArcActionRequest{};
+		LastCompletionTimestampSeconds = -1.0;
 		CommitNode(Graph->EntryActionTag);
 		ClearInputSlot();
 		ResetBufferWindow();
@@ -416,6 +449,7 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompletedImp
 		OutstandingRequest = FCadenceArcActionRequest{};
 		State = ECadenceArcResolverState::Ready;
 		InputSlot.LastObservedTimestampSeconds = CompletionTimestampSeconds;
+		RecordCompletionTimestamp(CompletionTimestampSeconds);
 		Outcome.SetBufferConsumption(
 			ECadenceArcResolutionCategory::NoAction,
 			ECadenceArcResolutionReason::WaitingForRelease);
@@ -442,6 +476,7 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompletedImp
 	OutstandingRequest = FCadenceArcActionRequest{};
 	Outcome.HandshakeResult = ECadenceArcHandshakeResult::Success;
 	State = ECadenceArcResolverState::Ready;
+	RecordCompletionTimestamp(CompletionTimestampSeconds);
 
 	// 判断是否存在缓冲
 	if (SlotCopy.SlotState != ECadenceArcInputSlotState::BufferedEvent)
@@ -475,7 +510,9 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompletedImp
 		Outcome.SetBufferConsumption(ECadenceArcResolutionCategory::NoAction, ECadenceArcResolutionReason::Expired);
 		return Outcome;
 	}
-	const auto Match = CadenceArc::GraphQuery::FindUniqueTransition(*Graph, CurrentActionTag, SlotCopy.InputEvent);
+	const auto Match = CadenceArc::GraphQuery::FindUniqueTransition(
+		*Graph, CurrentActionTag, SlotCopy.InputEvent, MakeResolutionContext(SlotCopy.InputEvent),
+		0.0);
 	FCadenceArcActionRequest NewRequest; // 非 None 时保持空请求
 	if (Match.Reason == ECadenceArcResolutionReason::None)
 	{
@@ -656,9 +693,17 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::ConsumeHoldRelease(
 		return Outcome;
 	}
 
+	// 停顿看按下时刻，不把蓄力时间算进去；跨 Completed 的按住按 0 秒处理。
+	// 没有完成起点时仍保持不可用，不能把它也截断成 0 秒。
+	const double PauseDurationSeconds = HoldSlot.SlotState == ECadenceArcInputSlotState::BufferedEvent
+		? 0.0
+		: (LastCompletionTimestampSeconds >= 0.0
+			? FMath::Max(0.0, GetPauseDurationSeconds(HoldSlot.InputEvent)) : -1.0);
+
 	// 用授予时冻结的边副本匹配：等待期间改资产不会改变本次轻重攻击的解释
 	const auto Match = CadenceArc::GraphQuery::FindUniqueTransition(
-		*Graph, HoldSlot.SourceActionTag, ReleasedEvent, &HoldSlot.ReleasedEdges);
+		*Graph, HoldSlot.SourceActionTag, ReleasedEvent, MakeResolutionContext(ReleasedEvent),
+		PauseDurationSeconds, &HoldSlot.ReleasedEdges);
 	if (Match.Reason == ECadenceArcResolutionReason::None)
 	{
 		Outcome.SetRequestProduced(CommitRequest(ReleasedEvent.InputTag, Match.TargetActionTag));
@@ -759,6 +804,8 @@ FCadenceArcInputAdvanceOutcome UCadenceArcResolver::ReleaseInputHoldImpl(
 		ReleaseSource = ECadenceArcInputReleaseSource::HoldLimit;
 		EffectiveRelease.TimestampSeconds = Timeline.AutoReleaseTime;
 		EffectiveRelease.HeldDurationSeconds = Timeline.AutoReleaseTime - Timeline.PressedTime;
+		// 到期后才收到物理松手也属于自动释放，不能采用较晚的松手方向。
+		EffectiveRelease.ContextTags = HoldCopy.InputEvent.ContextTags;
 	}
 
 	Outcome.SetAccepted(Token);
@@ -839,6 +886,7 @@ FCadenceArcInputAdvanceOutcome UCadenceArcResolver::AdvanceInputTimeImpl(const d
 	// 到达保持上限：合成一次释放，事件时刻用截止时刻，duration = 截止 − 按下
 	FCadenceArcInputEvent AutoRelease;
 	AutoRelease.InputTag = HoldCopy.InputEvent.InputTag;
+	AutoRelease.ContextTags = HoldCopy.InputEvent.ContextTags;
 	AutoRelease.InputPhase = ECadenceArcInputPhase::Released;
 	AutoRelease.TimestampSeconds = Timeline.AutoReleaseTime;
 	AutoRelease.HeldDurationSeconds = Timeline.AutoReleaseTime - Timeline.PressedTime;

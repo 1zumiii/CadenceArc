@@ -78,7 +78,10 @@ bool FCadenceArcGraphValidationValidTopologyTest::RunTest(const FString& Paramet
 	TArray<FString> Messages;
 	TestEqual(TEXT("Valid topology returns Valid"), static_cast<uint8>(ValidateGraph(Graph, Messages)),
 	          static_cast<uint8>(EDataValidationResult::Valid));
-	TestEqual(TEXT("Valid topology reports no errors"), Messages.Num(), 0);
+	// Finisher01 is terminal and unreachable: reachability only warns, it never makes the graph invalid.
+	TestEqual(TEXT("Valid topology reports only the unreachable-node warning"), Messages.Num(), 1);
+	TestTrue(TEXT("Unreachable terminal node is reported"),
+	         HasValidationMessage(Messages, TEXT("Node 'CadenceArc.Automation.Action.Finisher01' at index 3 is unreachable")));
 	return !HasAnyErrors();
 }
 

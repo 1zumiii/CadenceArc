@@ -10,6 +10,8 @@ namespace CadenceArc::GraphQuery
 		const UCadenceArcGraph& Graph,
 		const FGameplayTag& SourceActionTag,
 		const FCadenceArcInputEvent& Event,
+		const FGameplayTagContainer& ContextTags,
+		const double PauseDurationSeconds,
 		const TArray<FCadenceArcTransition>* EdgesOverride)
 	{
 		FTransitionMatch Result; // 默认 NoMatchingTransition
@@ -27,25 +29,43 @@ namespace CadenceArc::GraphQuery
 			Edges = &SourceNode->Transitions;
 		}
 
-		// 2. 统计候选，不提前 break：歧义必须被发现
+		// 2. 先过滤输入和条件，再统计最高优先级；低优先级打平不影响最终选择。
 		const FCadenceArcTransition* Matched = nullptr;
 		int32 MatchCount = 0;
+		bool bHasMatchingInput = false;
 		for (const FCadenceArcTransition& Edge : *Edges)
 		{
-			if (Edge.Matches(Event))
+			if (!Edge.Matches(Event))
+			{
+				continue;
+			}
+			bHasMatchingInput = true;
+			if (!ContextTags.HasAll(Edge.RequiredContextTags)
+				|| ContextTags.HasAny(Edge.BlockedContextTags)
+				|| (Edge.bUsePauseRange && !Edge.PauseRange.Contains(PauseDurationSeconds)))
+			{
+				continue;
+			}
+			if (!Matched || Edge.Priority > Matched->Priority)
 			{
 				Matched = &Edge;
+				MatchCount = 1;
+			}
+			else if (Edge.Priority == Matched->Priority)
+			{
 				++MatchCount;
 			}
 		}
 		if (MatchCount == 0)
 		{
-			return Result; // NoMatchingTransition
+			Result.Reason = bHasMatchingInput
+				? ECadenceArcResolutionReason::ConditionNotMet
+				: ECadenceArcResolutionReason::NoMatchingTransition;
+			return Result;
 		}
 		if (MatchCount > 1)
 		{
-			// 图校验禁止同源同 Tag 同 Phase 重叠，运行时出现歧义说明资产被改坏了
-			Result.Reason = ECadenceArcResolutionReason::InvalidGraphConfiguration;
+			Result.Reason = ECadenceArcResolutionReason::AmbiguousTransition;
 			return Result;
 		}
 
