@@ -74,7 +74,7 @@ if (Advance.HasActionRequest())
 
 ## 宿主接入注意事项
 
-- 将某个键设为 `HoldRelease` 后，当前节点必须有该 Tag 的 `Released` 转移。只有 `Pressed` 边时，`BeginInputHold` 返回 `NoMatchingTransition`。
+- 直接调用解析器时，`BeginInputHold` 要求当前节点有该 Tag 的 `Released` 转移；只有 `Pressed` 转移时返回 `NoMatchingTransition`。使用 CadenceArc 组件时，配置为 `HoldRelease` 的输入在这种节点上改为按下立即提交，详见[CadenceArc 组件](Component.md#输入方式)。
 - 资格申请失败或资格已经结束时，再调用 `ReleaseInputHold` 会返回 `NoMatchingHold`，调试历史将其标记为失败。Sandbox 的输入路由先用 `GetInputHoldSnapshot()` 确认 Token 是否仍然匹配，再提交松手事件。
 - 如果未收到物理松手，且没有触发自动释放或其他清理操作，资格会持续保留。宿主在按住期间失去控制时，例如取消控制 Pawn 或窗口失焦，应取消仍有效的资格，并清理输入追踪状态。这些情况下 Enhanced Input 触发 `Completed` 还是 `Canceled`，目前尚未验证。
 - 使用 MSVC 的 `/fp:fast` 编译时，需要精确浮点舍入的代码应显式启用精确模式。例如，`CadenceArcHoldTiming.cpp` 使用 `#pragma float_control(precise, on)` 保护阈值计算。

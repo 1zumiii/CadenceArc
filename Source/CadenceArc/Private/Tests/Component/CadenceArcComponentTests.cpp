@@ -100,7 +100,22 @@ namespace CadenceArc::Tests
 			});
 			Component->OnHoldStageChangedNative.AddLambda(
 				[this](FGameplayTag, const FCadenceArcInputStageChange& Change) { Stages.Add(Change.ToStage); });
+			Component->OnHoldEndedNative.AddLambda(
+				[this](const FGameplayTag InputTag, const ECadenceArcHoldEndReason Reason)
+				{
+					FString Name = InputTag.ToString();
+					int32 Dot = INDEX_NONE;
+					if (Name.FindLastChar(TEXT('.'), Dot))
+					{
+						Name.RightChopInline(Dot + 1);
+					}
+					Ended.Add(Name + TEXT(":") + StaticEnum<ECadenceArcHoldEndReason>()->GetNameStringByValue(
+						static_cast<int64>(Reason)));
+				});
 		}
+
+		// 每次资格结束记为 "Tag:原因"
+		TArray<FString> Ended;
 
 		void Tick(const double Time)
 		{
@@ -114,6 +129,7 @@ namespace CadenceArc::Tests
 	{
 		UCadenceArcComponent* Component = NewObject<UCadenceArcComponent>();
 		Host.Bind(Component);
+		Component->SetInputMode(Input_Heavy, ECadenceArcInputMode::HoldRelease); // Light 未配置，按 PressOnly 处理
 		Test.TestEqual(TEXT("Component graph initializes"),
 		               static_cast<int32>(Component->InitializeResolver(MakeComponentGraph(MaxChargedHoldSeconds))),
 		               static_cast<int32>(ECadenceArcResolverInitResult::Success));
@@ -173,14 +189,14 @@ namespace CadenceArc::Tests
 		UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
 
 		Host.Now = 1.0;
-		Component->PressInput(Input_Light, ECadenceArcInputMode::PressOnly, FGameplayTagContainer());
+		Component->PressInput(Input_Light);
 		ExpectStarted(*this, TEXT("PressOnly press"), Host, {Action_Light01});
 		TestTrue(TEXT("PressOnly press is tracked until release"), Component->IsInputPressed(Input_Light));
 		ExpectHold(*this, TEXT("PressOnly press"), Component, false);
 
 		// 松开只结束配对，不会再次提交
 		Host.Now = 1.1;
-		Component->ReleaseInput(Input_Light, FGameplayTagContainer());
+		Component->ReleaseInput(Input_Light);
 		ExpectStarted(*this, TEXT("PressOnly release"), Host, {Action_Light01});
 		TestFalse(TEXT("PressOnly release ends tracking"), Component->IsInputPressed(Input_Light));
 		return !HasAnyErrors();
@@ -198,12 +214,12 @@ namespace CadenceArc::Tests
 			FComponentHost Host;
 			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
 			Host.Now = 1.0;
-			Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+			Component->PressInput(Input_Heavy);
 			ExpectStarted(*this, TEXT("Hold press"), Host, {});
 			ExpectHold(*this, TEXT("Hold press"), Component, true);
 
 			Host.Now = 1.1;
-			Component->ReleaseInput(Input_Heavy, FGameplayTagContainer());
+			Component->ReleaseInput(Input_Heavy);
 			ExpectStarted(*this, TEXT("Tap release"), Host, {Action_Heavy01});
 			ExpectHold(*this, TEXT("Tap release"), Component, false);
 			TestFalse(TEXT("Tap release ends tracking"), Component->IsInputPressed(Input_Heavy));
@@ -214,7 +230,7 @@ namespace CadenceArc::Tests
 			FComponentHost Host;
 			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
 			Host.Now = 1.0;
-			Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+			Component->PressInput(Input_Heavy);
 			Host.Tick(1.3);
 			TestEqual(TEXT("Tick reaches Charging"),
 			          static_cast<int32>(Component->GetResolver()->GetInputHoldSnapshot().Stage),
@@ -224,7 +240,7 @@ namespace CadenceArc::Tests
 				         ECadenceArcHoldStage::Charging, ECadenceArcHoldStage::Charged
 			         });
 			Host.Now = 2.0;
-			Component->ReleaseInput(Input_Heavy, FGameplayTagContainer());
+			Component->ReleaseInput(Input_Heavy);
 			ExpectStarted(*this, TEXT("Charged release"), Host, {Action_Heavy02});
 		}
 		return !HasAnyErrors();
@@ -242,16 +258,16 @@ namespace CadenceArc::Tests
 		FComponentHost Host;
 		UCadenceArcComponent* Component = MakeHostedComponent(*this, Host, 0.0);
 		Host.Now = 1.0;
-		Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+		Component->PressInput(Input_Heavy);
 		Host.Now = 2.0;
-		Component->PressInput(Input_Light, ECadenceArcInputMode::PressOnly, FGameplayTagContainer());
+		Component->PressInput(Input_Light);
 		ExpectStarted(*this, TEXT("Overdue release before new press"), Host, {Action_Heavy02});
 		TestEqual(TEXT("Overdue release is executing"), Component->GetResolver()->GetCurrentActionTag().ToString(),
 		          Action_Heavy02.GetTag().ToString());
 
 		// 松开晚到：资格已经兑现过，不会再攻击一次，但配对要正常结束
 		Host.Now = 2.1;
-		Component->ReleaseInput(Input_Heavy, FGameplayTagContainer());
+		Component->ReleaseInput(Input_Heavy);
 		ExpectStarted(*this, TEXT("Late physical release"), Host, {Action_Heavy02});
 		TestFalse(TEXT("Late physical release ends tracking"), Component->IsInputPressed(Input_Heavy));
 		TestTrue(TEXT("Other key is still tracked"), Component->IsInputPressed(Input_Light));
@@ -268,7 +284,7 @@ namespace CadenceArc::Tests
 		FComponentHost Host;
 		UCadenceArcComponent* Component = MakeHostedComponent(*this, Host, 0.0);
 		Host.Now = 1.0;
-		Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+		Component->PressInput(Input_Heavy);
 		Host.Tick(1.4);
 		ExpectStarted(*this, TEXT("Before the deadline"), Host, {});
 
@@ -279,7 +295,7 @@ namespace CadenceArc::Tests
 		// 重复推进和随后的松开都不会产生第二次攻击
 		Host.Tick(1.7);
 		Host.Now = 2.0;
-		Component->ReleaseInput(Input_Heavy, FGameplayTagContainer());
+		Component->ReleaseInput(Input_Heavy);
 		ExpectStarted(*this, TEXT("After auto release"), Host, {Action_Heavy02});
 		TestFalse(TEXT("Physical release still ends tracking"), Component->IsInputPressed(Input_Heavy));
 		ExpectNoResolverRelease(*this, TEXT("After auto release"), Component);
@@ -298,22 +314,22 @@ namespace CadenceArc::Tests
 
 		// Heavy 仍处于 Holding（1.1 < 1.25），Light 的按下被接受并替换 Heavy 的资格
 		Host.Now = 1.0;
-		Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+		Component->PressInput(Input_Heavy);
 		Host.Now = 1.1;
-		Component->PressInput(Input_Light, ECadenceArcInputMode::PressOnly, FGameplayTagContainer());
+		Component->PressInput(Input_Light);
 		ExpectStarted(*this, TEXT("Light replaces holding heavy"), Host, {Action_Light01});
 		TestTrue(TEXT("Both keys are tracked"),
 		         Component->IsInputPressed(Input_Heavy) && Component->IsInputPressed(Input_Light));
 
 		// Heavy 松开使用 Heavy 自己的 Token：只结束 Heavy 的配对，被替换的资格不产生攻击
 		Host.Now = 1.3;
-		Component->ReleaseInput(Input_Heavy, FGameplayTagContainer());
+		Component->ReleaseInput(Input_Heavy);
 		ExpectStarted(*this, TEXT("Replaced heavy release"), Host, {Action_Light01});
 		TestFalse(TEXT("Heavy release ends heavy tracking"), Component->IsInputPressed(Input_Heavy));
 		TestTrue(TEXT("Heavy release leaves light tracked"), Component->IsInputPressed(Input_Light));
 
 		Host.Now = 1.4;
-		Component->ReleaseInput(Input_Light, FGameplayTagContainer());
+		Component->ReleaseInput(Input_Light);
 		TestFalse(TEXT("Light release ends light tracking"), Component->IsInputPressed(Input_Light));
 		ExpectStarted(*this, TEXT("Final"), Host, {Action_Light01});
 		return !HasAnyErrors();
@@ -329,23 +345,32 @@ namespace CadenceArc::Tests
 		FComponentHost Host;
 		UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
 
-		// Root 上 Light 没有 Released 边：申请被拒绝，但按键配对仍保留到真实松开
+		// Light01 执行中且窗口关闭：Heavy 申请按住资格被拒绝，但按键配对仍保留到真实松开
 		Host.Now = 1.0;
-		Component->PressInput(Input_Light, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+		Component->PressInput(Input_Light);
+		Component->ReleaseInput(Input_Light);
+		if (!ExpectStarted(*this, TEXT("Light01 starts"), Host, {Action_Light01})) { return false; }
+		Host.Now = 1.1;
+		const FCadenceArcInputResult Rejected = Component->PressInput(Input_Heavy);
+		TestEqual(TEXT("Closed window rejects the hold"), static_cast<int32>(Rejected.Reason),
+		          static_cast<int32>(ECadenceArcResolutionReason::BufferWindowClosed));
 		ExpectHold(*this, TEXT("Rejected begin"), Component, false);
-		TestTrue(TEXT("Rejected begin keeps the physical press"), Component->IsInputPressed(Input_Light));
+		TestTrue(TEXT("Rejected begin keeps the physical press"), Component->IsInputPressed(Input_Heavy));
 		Host.Now = 1.2;
-		Component->ReleaseInput(Input_Light, FGameplayTagContainer());
-		TestFalse(TEXT("Release after rejected begin ends tracking"), Component->IsInputPressed(Input_Light));
-		ExpectStarted(*this, TEXT("Rejected begin"), Host, {});
+		TestEqual(TEXT("Release after rejected begin only ends pairing"),
+		          static_cast<int32>(Component->ReleaseInput(Input_Heavy).Status),
+		          static_cast<int32>(ECadenceArcInputStatus::KeyReleased));
+		TestFalse(TEXT("Release after rejected begin ends tracking"), Component->IsInputPressed(Input_Heavy));
+		ExpectStarted(*this, TEXT("Rejected begin"), Host, {Action_Light01});
 		ExpectNoResolverRelease(*this, TEXT("Release after rejected begin"), Component);
 
 		// 重复按下被忽略，不会替换已经授予的资格
+		Component->OpenBufferWindow(Host.Started[0].RequestId);
 		Host.Now = 2.0;
-		Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+		Component->PressInput(Input_Heavy);
 		const FCadenceArcHoldSnapshot First = Component->GetResolver()->GetInputHoldSnapshot();
 		Host.Now = 2.1;
-		Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+		Component->PressInput(Input_Heavy);
 		const FCadenceArcHoldSnapshot Second = Component->GetResolver()->GetInputHoldSnapshot();
 		TestTrue(TEXT("Repeated press keeps the token"), First.Token == Second.Token);
 		TestEqual(TEXT("Repeated press keeps the press time"), Second.PressedTimestampSeconds, 2.0);
@@ -364,20 +389,20 @@ namespace CadenceArc::Tests
 			FComponentHost Host;
 			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
 			Host.Now = 1.0;
-			Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+			Component->PressInput(Input_Heavy);
 			Host.Tick(1.3);
 			Component->CancelInput(Input_Heavy);
 			ExpectHold(*this, TEXT("Cancel"), Component, false);
 			TestFalse(TEXT("Cancel ends tracking"), Component->IsInputPressed(Input_Heavy));
 
 			Host.Now = 2.0;
-			Component->ReleaseInput(Input_Heavy, FGameplayTagContainer());
+			Component->ReleaseInput(Input_Heavy);
 			Host.Tick(10.0);
 			ExpectStarted(*this, TEXT("After cancel"), Host, {});
 
 			// 取消之后同一个键可以重新按下
 			Host.Now = 11.0;
-			Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+			Component->PressInput(Input_Heavy);
 			ExpectHold(*this, TEXT("Press after cancel"), Component, true);
 		}
 
@@ -386,25 +411,22 @@ namespace CadenceArc::Tests
 			FComponentHost Host;
 			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
 			Host.Now = 1.0;
-			Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
-			Host.Now = 1.05;
-			Component->PressInput(Input_Light, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer()); // 申请被拒绝，仍跟踪
-			TestTrue(TEXT("Both keys tracked before CancelAllInputs"),
-			         Component->IsInputPressed(Input_Heavy) && Component->IsInputPressed(Input_Light));
+			Component->PressInput(Input_Heavy);
+			TestTrue(TEXT("Heavy tracked before CancelAllInputs"), Component->IsInputPressed(Input_Heavy));
 
 			Component->CancelAllInputs();
 			ExpectHold(*this, TEXT("CancelAllInputs"), Component, false);
 			TestFalse(TEXT("CancelAllInputs clears heavy"), Component->IsInputPressed(Input_Heavy));
-			TestFalse(TEXT("CancelAllInputs clears light"), Component->IsInputPressed(Input_Light));
 
 			Host.Now = 1.2;
-			Component->ReleaseInput(Input_Heavy, FGameplayTagContainer());
-			Component->ReleaseInput(Input_Light, FGameplayTagContainer());
+			TestEqual(TEXT("Release after CancelAllInputs is not paired"),
+			          static_cast<int32>(Component->ReleaseInput(Input_Heavy).Status),
+			          static_cast<int32>(ECadenceArcInputStatus::NotPressed));
 			Host.Tick(10.0);
 			ExpectStarted(*this, TEXT("After CancelAllInputs"), Host, {});
 
 			Host.Now = 11.0;
-			Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+			Component->PressInput(Input_Heavy);
 			ExpectHold(*this, TEXT("Press after CancelAllInputs"), Component, true);
 		}
 		return !HasAnyErrors();
@@ -421,15 +443,15 @@ namespace CadenceArc::Tests
 		FComponentHost Host;
 		UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
 		Host.Now = 0.4;
-		Component->PressInput(Input_Light, ECadenceArcInputMode::PressOnly, FGameplayTagContainer());
+		Component->PressInput(Input_Light);
 		Host.Now = 0.5;
-		Component->ReleaseInput(Input_Light, FGameplayTagContainer());
+		Component->ReleaseInput(Input_Light);
 		if (!ExpectStarted(*this, TEXT("Light01 starts"), Host, {Action_Light01})) { return false; }
 		const int64 RequestId = Host.Started[0].RequestId;
 
 		Component->OpenBufferWindow(RequestId);
 		Host.Now = 1.0;
-		Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+		Component->PressInput(Input_Heavy);
 		ExpectHold(*this, TEXT("Grant inside the window"), Component, true);
 		Component->CloseBufferWindow(RequestId);
 
@@ -442,7 +464,7 @@ namespace CadenceArc::Tests
 		ExpectHold(*this, TEXT("After completion"), Component, true);
 
 		Host.Now = 2.0;
-		Component->ReleaseInput(Input_Heavy, FGameplayTagContainer());
+		Component->ReleaseInput(Input_Heavy);
 		ExpectStarted(*this, TEXT("Release after completion"), Host, {Action_Light01, Action_Finisher02});
 		return !HasAnyErrors();
 	}
@@ -458,14 +480,14 @@ namespace CadenceArc::Tests
 		FComponentHost Host;
 		UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
 		Host.Now = 1.0;
-		Component->PressInput(Input_Light, ECadenceArcInputMode::PressOnly, FGameplayTagContainer());
+		Component->PressInput(Input_Light);
 		Host.Now = 1.1;
-		Component->ReleaseInput(Input_Light, FGameplayTagContainer());
+		Component->ReleaseInput(Input_Light);
 		if (!ExpectStarted(*this, TEXT("First press"), Host, {Action_Light01})) { return false; }
 		const int64 First = Host.Started[0].RequestId;
 		Component->OpenBufferWindow(First);
 		Host.Now = 1.3;
-		Component->PressInput(Input_Light, ECadenceArcInputMode::PressOnly, FGameplayTagContainer(Context_Forward));
+		Component->PressInputWithContext(Input_Light, FGameplayTagContainer(Context_Forward));
 		ExpectStarted(*this, TEXT("Buffered press"), Host, {Action_Light01});
 
 		Host.Now = 1.8;
@@ -491,10 +513,10 @@ namespace CadenceArc::Tests
 			UCadenceArcComponent* Component = NewObject<UCadenceArcComponent>();
 			Host.Bind(Component);
 			Host.Tick(1.0);
-			Component->PressInput(Input_Light, ECadenceArcInputMode::PressOnly, FGameplayTagContainer());
-			Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+			Component->PressInput(Input_Light);
+			Component->PressInput(Input_Heavy);
 			TestFalse(TEXT("Uninitialized component does not track"), Component->IsInputPressed(Input_Light));
-			Component->ReleaseInput(Input_Light, FGameplayTagContainer());
+			Component->ReleaseInput(Input_Light);
 			Component->CancelInput(Input_Heavy);
 			Component->CancelAllInputs();
 			TestEqual(TEXT("Completion without resolver"),
@@ -514,7 +536,7 @@ namespace CadenceArc::Tests
 			             static_cast<int32>(Component->InitializeResolver(NewObject<UCadenceArcGraph>())),
 			             static_cast<int32>(ECadenceArcResolverInitResult::Success));
 			Host.Now = 1.0;
-			Component->PressInput(Input_Light, ECadenceArcInputMode::PressOnly, FGameplayTagContainer());
+			Component->PressInput(Input_Light);
 			TestFalse(TEXT("Invalid graph does not track"), Component->IsInputPressed(Input_Light));
 			ExpectStarted(*this, TEXT("Invalid graph"), Host, {});
 		}
@@ -524,12 +546,331 @@ namespace CadenceArc::Tests
 			FComponentHost Host;
 			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
 			Host.Now = 1.0;
-			Component->PressInput(Input_Heavy, ECadenceArcInputMode::HoldRelease, FGameplayTagContainer());
+			Component->PressInput(Input_Heavy);
 			Component->InitializeResolver(MakeComponentGraph(1.0));
 			TestFalse(TEXT("Re-initialize clears tracking"), Component->IsInputPressed(Input_Heavy));
 			Host.Now = 1.1;
-			Component->ReleaseInput(Input_Heavy, FGameplayTagContainer());
+			Component->ReleaseInput(Input_Heavy);
 			ExpectStarted(*this, TEXT("Release after re-initialize"), Host, {});
+		}
+		return !HasAnyErrors();
+	}
+
+	// ---- 输入方式配置、上下文提供者、输入结果和按住结束通知 ----
+
+	static int32 StatusOf(const FCadenceArcInputResult& Result) { return static_cast<int32>(Result.Status); }
+	static int32 StatusValue(const ECadenceArcInputStatus Status) { return static_cast<int32>(Status); }
+
+	// 调试历史里最后一次提交（bRelease 为 false）或松手（true）记录的事件上下文。
+	// 调试历史只在编辑器构建中存在，其他构建返回空值，调用方跳过检查。
+	static TOptional<FGameplayTagContainer> LastInputContext(const UCadenceArcComponent* Component, const bool bRelease)
+	{
+		TOptional<FGameplayTagContainer> Found;
+#if WITH_EDITOR
+		const ECadenceArcDebugOperation Operation =
+			bRelease ? ECadenceArcDebugOperation::ReleaseHold : ECadenceArcDebugOperation::SubmitInput;
+		TArray<FCadenceArcDebugEvent> Events;
+		Component->GetResolver()->GetDebugHistory().CopyEventsAfter(0, Events);
+		for (const FCadenceArcDebugEvent& Event : Events)
+		{
+			if (Event.Operation == Operation)
+			{
+				Found = Event.InputContextTags;
+			}
+		}
+#endif
+		return Found;
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcComponentModeConfigTest,
+		"CadenceArc.Component.Input.ModeConfiguredOnce",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcComponentModeConfigTest::RunTest(const FString& Parameters)
+	{
+		FComponentHost Host;
+		UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
+		TestEqual(TEXT("Unconfigured tag is PressOnly"), static_cast<int32>(Component->GetInputMode(Input_Light)),
+		          static_cast<int32>(ECadenceArcInputMode::PressOnly));
+		TestEqual(TEXT("Configured tag keeps its mode"), static_cast<int32>(Component->GetInputMode(Input_Heavy)),
+		          static_cast<int32>(ECadenceArcInputMode::HoldRelease));
+
+		// 不需要在每次按下时传入方式：Heavy 按配置申请按住资格，松开时解析
+		Host.Now = 1.0;
+		TestEqual(TEXT("Configured hold press"), StatusOf(Component->PressInput(Input_Heavy)),
+		          StatusValue(ECadenceArcInputStatus::HoldGranted));
+		Host.Now = 1.1;
+		TestEqual(TEXT("Configured hold release"), StatusOf(Component->ReleaseInput(Input_Heavy)),
+		          StatusValue(ECadenceArcInputStatus::RequestProduced));
+		ExpectStarted(*this, TEXT("Configured hold"), Host, {Action_Heavy01});
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcComponentHoldFallbackTest,
+		"CadenceArc.Component.Input.HoldReleaseFallsBackToPress",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcComponentHoldFallbackTest::RunTest(const FString& Parameters)
+	{
+		// Root 上 Heavy 只有 Pressed 转移：HoldRelease 的键不申请资格，按下立即提交
+		UCadenceArcGraph* Graph = NewObject<UCadenceArcGraph>();
+		Graph->EntryActionTag = Action_Root;
+		FCadenceArcNode& Root = Graph->Nodes.AddDefaulted_GetRef();
+		Root.ActionTag = Action_Root;
+		Root.Transitions.Add(MakeComponentEdge(Input_Heavy, Action_Heavy01, ECadenceArcInputPhase::Pressed));
+		Graph->Nodes.AddDefaulted_GetRef().ActionTag = Action_Heavy01;
+
+		FComponentHost Host;
+		UCadenceArcComponent* Component = NewObject<UCadenceArcComponent>();
+		Host.Bind(Component);
+		Component->SetInputMode(Input_Heavy, ECadenceArcInputMode::HoldRelease);
+		if (!TestEqual(TEXT("Fallback graph initializes"), static_cast<int32>(Component->InitializeResolver(Graph)),
+		               static_cast<int32>(ECadenceArcResolverInitResult::Success)))
+		{
+			return false;
+		}
+
+		Host.Now = 1.0;
+		TestEqual(TEXT("Press resolves immediately"), StatusOf(Component->PressInput(Input_Heavy)),
+		          StatusValue(ECadenceArcInputStatus::RequestProduced));
+		if (!ExpectStarted(*this, TEXT("Fallback press"), Host, {Action_Heavy01})) { return false; }
+		ExpectHold(*this, TEXT("Fallback press"), Component, false);
+
+		// 长按之后松开只结束配对，不会再提交一次
+		Host.Tick(1.8);
+		Host.Now = 2.0;
+		TestEqual(TEXT("Release only ends pairing"), StatusOf(Component->ReleaseInput(Input_Heavy)),
+		          StatusValue(ECadenceArcInputStatus::KeyReleased));
+		ExpectStarted(*this, TEXT("Fallback release"), Host, {Action_Heavy01});
+		ExpectNoResolverRelease(*this, TEXT("Fallback release"), Component);
+
+		// Heavy01 是终止节点：完成后再按，没有可走的转移
+		Component->NotifyActionCompleted(Host.Started[0].RequestId);
+		Host.Now = 2.5;
+		const FCadenceArcInputResult NoEdge = Component->PressInput(Input_Heavy);
+		TestEqual(TEXT("Leaf press has no action"), StatusOf(NoEdge), StatusValue(ECadenceArcInputStatus::NoAction));
+		TestEqual(TEXT("Leaf press reason"), static_cast<int32>(NoEdge.Reason),
+		          static_cast<int32>(ECadenceArcResolutionReason::NoMatchingTransition));
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcComponentInputResultTest,
+		"CadenceArc.Component.Input.Results",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcComponentInputResultTest::RunTest(const FString& Parameters)
+	{
+		TestEqual(TEXT("Uninitialized"), StatusOf(NewObject<UCadenceArcComponent>()->PressInput(Input_Light)),
+		          StatusValue(ECadenceArcInputStatus::NotInitialized));
+
+		{
+			FComponentHost Host;
+			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
+			Host.Now = 1.0;
+			const FCadenceArcInputResult Produced = Component->PressInput(Input_Light);
+			TestEqual(TEXT("Request produced"), StatusOf(Produced), StatusValue(ECadenceArcInputStatus::RequestProduced));
+			TestTrue(TEXT("Produced is accepted"), Produced.IsAccepted());
+			Host.Now = 1.05;
+			TestEqual(TEXT("Repeated press"), StatusOf(Component->PressInput(Input_Light)),
+			          StatusValue(ECadenceArcInputStatus::AlreadyPressed));
+			TestEqual(TEXT("Release of an unpressed key"), StatusOf(Component->ReleaseInput(Input_Heavy)),
+			          StatusValue(ECadenceArcInputStatus::NotPressed));
+			TestEqual(TEXT("PressOnly release"), StatusOf(Component->ReleaseInput(Input_Light)),
+			          StatusValue(ECadenceArcInputStatus::KeyReleased));
+
+			if (!TestTrue(TEXT("A request was started"), Host.Started.Num() > 0)) { return false; }
+			Component->OpenBufferWindow(Host.Started[0].RequestId);
+			Host.Now = 1.2;
+			const FCadenceArcInputResult Buffered = Component->PressInput(Input_Light);
+			TestEqual(TEXT("Buffered"), StatusOf(Buffered), StatusValue(ECadenceArcInputStatus::Buffered));
+			TestTrue(TEXT("Buffered is accepted"), Buffered.IsAccepted());
+			ExpectStarted(*this, TEXT("Results"), Host, {Action_Light01});
+		}
+
+		// 蓄力中的保护：其他输入被拒绝，原因是 HoldProtected
+		{
+			FComponentHost Host;
+			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
+			Host.Now = 1.0;
+			Component->PressInput(Input_Heavy);
+			Host.Tick(1.3);
+			const FCadenceArcInputResult Protected = Component->PressInput(Input_Light);
+			TestEqual(TEXT("Charging protects the hold"), StatusOf(Protected), StatusValue(ECadenceArcInputStatus::Rejected));
+			TestEqual(TEXT("Protection reason"), static_cast<int32>(Protected.Reason),
+			          static_cast<int32>(ECadenceArcResolutionReason::HoldProtected));
+			TestFalse(TEXT("Rejected is not accepted"), Protected.IsAccepted());
+			ExpectHold(*this, TEXT("Protected hold"), Component, true);
+		}
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcComponentContextProviderTest,
+		"CadenceArc.Component.Input.ContextProvider",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcComponentContextProviderTest::RunTest(const FString& Parameters)
+	{
+		FComponentHost Host;
+		UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
+		int32 Calls = 0;
+		Component->SetContextProviderFunction([&Calls](FGameplayTag, const ECadenceArcInputPhase Phase)
+		{
+			++Calls;
+			return FGameplayTagContainer(Phase == ECadenceArcInputPhase::Pressed ? Context_Forward : Context_Air);
+		});
+
+		// 省略上下文：按下时调用一次提供者，结果写进输入事件
+		Host.Now = 1.0;
+		Component->PressInput(Input_Light);
+		TestEqual(TEXT("Provider called once on press"), Calls, 1);
+		if (const TOptional<FGameplayTagContainer> Submit = LastInputContext(Component, false))
+		{
+			TestTrue(TEXT("Press carries the provided context"), Submit->HasTagExact(Context_Forward));
+		}
+		Component->ReleaseInput(Input_Light);
+		TestEqual(TEXT("PressOnly release does not collect"), Calls, 1);
+
+		// 显式快照：不调用提供者，空容器表示没有上下文
+		if (!TestTrue(TEXT("A request was started"), Host.Started.Num() > 0)) { return false; }
+		Component->OpenBufferWindow(Host.Started[0].RequestId);
+		Host.Now = 1.2;
+		Component->PressInputWithContext(Input_Light, FGameplayTagContainer());
+		TestEqual(TEXT("Explicit context skips the provider"), Calls, 1);
+		if (const TOptional<FGameplayTagContainer> Submit = LastInputContext(Component, false))
+		{
+			TestTrue(TEXT("Explicit empty context stays empty"), Submit->IsEmpty());
+		}
+
+		// 按住：松开时再采集一次，使用松开阶段的上下文
+		FComponentHost HoldHost;
+		UCadenceArcComponent* HoldComponent = MakeHostedComponent(*this, HoldHost);
+		int32 HoldCalls = 0;
+		HoldComponent->SetContextProviderFunction([&HoldCalls](FGameplayTag, const ECadenceArcInputPhase Phase)
+		{
+			++HoldCalls;
+			return FGameplayTagContainer(Phase == ECadenceArcInputPhase::Pressed ? Context_Forward : Context_Air);
+		});
+		HoldHost.Now = 1.0;
+		HoldComponent->PressInput(Input_Heavy);
+		HoldHost.Now = 1.1;
+		HoldComponent->ReleaseInput(Input_Heavy);
+		TestEqual(TEXT("Provider called on press and release"), HoldCalls, 2);
+		if (const TOptional<FGameplayTagContainer> Release = LastInputContext(HoldComponent, true))
+		{
+			TestTrue(TEXT("Release carries the release context"), Release->HasTagExact(Context_Air));
+		}
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcComponentPersistentContextTest,
+		"CadenceArc.Component.PersistentContextBeforeInitialize",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcComponentPersistentContextTest::RunTest(const FString& Parameters)
+	{
+		// 解析器创建之前设置的持久上下文不会丢失，初始化和重新初始化后都生效
+		UCadenceArcComponent* Component = NewObject<UCadenceArcComponent>();
+		Component->SetContextTags(FGameplayTagContainer(Context_Air));
+		TestTrue(TEXT("Context is readable before initialization"), Component->GetContextTags().HasTagExact(Context_Air));
+		Component->InitializeResolver(MakeComponentGraph(1.0));
+		TestTrue(TEXT("Resolver receives the early context"),
+		         Component->GetResolver()->GetContextTags().HasTagExact(Context_Air));
+		Component->InitializeResolver(MakeComponentGraph(1.0));
+		TestTrue(TEXT("Re-initialization keeps the context"),
+		         Component->GetResolver()->GetContextTags().HasTagExact(Context_Air));
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcComponentHoldEndedTest,
+		"CadenceArc.Component.HoldEndedOncePerHold",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcComponentHoldEndedTest::RunTest(const FString& Parameters)
+	{
+		const auto ExpectEnded = [this](const TCHAR* What, const FComponentHost& Host, const TArray<FString>& Expected)
+		{
+			TestEqual(*FString::Printf(TEXT("%s hold endings"), What), FString::Join(Host.Ended, TEXT(", ")),
+			          FString::Join(Expected, TEXT(", ")));
+		};
+
+		// 手动松开
+		{
+			FComponentHost Host;
+			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
+			Host.Now = 1.0;
+			Component->PressInput(Input_Heavy);
+			ExpectEnded(TEXT("Granted"), Host, {});
+			Host.Now = 1.1;
+			Component->ReleaseInput(Input_Heavy);
+			ExpectEnded(TEXT("Released"), Host, {TEXT("Heavy:Released")});
+		}
+		// 自动释放，之后的松开不再通知
+		{
+			FComponentHost Host;
+			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host, 0.0);
+			Host.Now = 1.0;
+			Component->PressInput(Input_Heavy);
+			Host.Tick(1.6);
+			Host.Now = 2.0;
+			Component->ReleaseInput(Input_Heavy);
+			ExpectEnded(TEXT("AutoReleased"), Host, {TEXT("Heavy:AutoReleased")});
+		}
+		// 取消，之后的松开不再通知
+		{
+			FComponentHost Host;
+			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
+			Host.Now = 1.0;
+			Component->PressInput(Input_Heavy);
+			Component->CancelInput(Input_Heavy);
+			Host.Now = 1.1;
+			Component->ReleaseInput(Input_Heavy);
+			ExpectEnded(TEXT("Cancelled"), Host, {TEXT("Heavy:Cancelled")});
+		}
+		// 被另一个输入替换
+		{
+			FComponentHost Host;
+			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
+			Host.Now = 1.0;
+			Component->PressInput(Input_Heavy);
+			Host.Now = 1.1;
+			Component->PressInput(Input_Light);
+			Host.Now = 1.2;
+			Component->ReleaseInput(Input_Heavy);
+			ExpectEnded(TEXT("Replaced"), Host, {TEXT("Heavy:Replaced")});
+		}
+		// 重置连招
+		{
+			FComponentHost Host;
+			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
+			Host.Now = 1.0;
+			Component->PressInput(Input_Heavy);
+			Component->ResetCombo();
+			ExpectEnded(TEXT("Cleared"), Host, {TEXT("Heavy:Cleared")});
+		}
+		// 完成回调保留资格：直到松开才结束
+		{
+			FComponentHost Host;
+			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
+			Host.Now = 0.4;
+			Component->PressInput(Input_Light);
+			Component->ReleaseInput(Input_Light);
+			if (!TestTrue(TEXT("A request was started"), Host.Started.Num() > 0)) { return false; }
+			const int64 RequestId = Host.Started[0].RequestId;
+			Component->OpenBufferWindow(RequestId);
+			Host.Now = 1.0;
+			Component->PressInput(Input_Heavy);
+			Host.Now = 1.4;
+			Component->NotifyActionCompleted(RequestId);
+			ExpectEnded(TEXT("Across completion"), Host, {});
+			Host.Now = 2.0;
+			Component->ReleaseInput(Input_Heavy);
+			ExpectEnded(TEXT("Release after completion"), Host, {TEXT("Heavy:Released")});
 		}
 		return !HasAnyErrors();
 	}

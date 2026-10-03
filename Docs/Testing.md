@@ -32,7 +32,7 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 | `Graph/CadenceArcHoldValidationTests.cpp` | 阶段、时长区间、蓄力配置、旧名重定向 |
 | `Graph/CadenceArcConditionValidationTests.cpp` | 条件下的重叠规则、单边条件矛盾、无效停顿区间、可达性警告 |
 | `Input/CadenceArcInputTrackerTests.cpp` | 按下和松开的配对、时长、Token |
-| `Component/CadenceArcComponentTests.cpp` | CadenceArc 组件：按键配对、按住资格的提交和取消、逐帧推进与自动释放、统一请求出口、注入的时间来源、未初始化时的空操作 |
+| `Component/CadenceArcComponentTests.cpp` | CadenceArc 组件：按键配对、输入方式配置和无松手转移时的按下回退、上下文提供者、输入处理结果、按住结束通知、按住资格的提交和取消、逐帧推进与自动释放、统一请求出口、初始化前的持久上下文、注入的时间来源 |
 
 ## 编辑器模块测试
 

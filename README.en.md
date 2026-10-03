@@ -23,26 +23,26 @@ CadenceArc only decides which move comes next. How an action plays, deals damage
 ## Features
 
 - **Action graphs**: a `UDataAsset` keyed by Gameplay Tags, validated in the editor.
-- **Standard integration component**: `UCadenceArcComponent` handles timestamps, per-frame advance, press/release pairing, and a single request outlet; you provide inputs, context, and executor callbacks.
+- **Standard integration component**: `UCadenceArcComponent` handles timestamps, per-frame advance, press/release pairing, input modes, and a single request outlet, and reports input results and hold endings. You configure input modes and the context source once and implement the executor callbacks.
 - **Two-phase handshake**: a resolved request commits only when the executor confirms it started; a rejection leaves state unchanged.
 - **Input buffering**: an executor-controlled window with a single slot (last input wins) and optional expiry.
 - **Hold and charge**: different moves for different hold durations, with charge stages, charge protection, and automatic release.
 - **Transition conditions**: the same input can branch on context tags (per input or persistent) and on the pause since the last action, with explicit priorities. Ties are reported, never guessed.
 - **Explicit time**: the caller supplies every timestamp; the resolver never reads a clock, so results are deterministic.
 - **Runtime debugger**: editor-only live graph view, an input display, and a call history that explains failures, including which condition failed.
-- **Automated tests**: 140 Unreal automation tests covering time boundaries, stale callbacks, and failure atomicity.
 
 ## Quick Start
 
 1. Put this repository at `Plugins/CadenceArc` in your project (a Git submodule works) and enable the plugin.
 2. Add `"CadenceArc"` and `"GameplayTags"` to your module's `Build.cs` dependencies.
 3. Create a `CadenceArcGraph` data asset with an entry node, nodes, and transitions.
-4. Add a `UCadenceArcComponent` to your character and assign the graph to its `Graph` property. The component handles timestamps, per-frame advance, press/release pairing, and the request outlet.
+4. Add a `UCadenceArcComponent` to your character, assign the graph to its `Graph` property, and set `HoldRelease` in `InputModes` for inputs that wait for release. The component handles timestamps, per-frame advance, press/release pairing, and the request outlet. If you need event context such as direction, implement `ICadenceArcInputContextProvider` on the character.
 5. Call `PressInput` and `ReleaseInput` from your input bindings. Your executor subscribes to `OnActionRequested` and reports the action lifecycle back:
 
 ```cpp
-// Input binding
-CadenceArcComponent->PressInput(InputTag, ECadenceArcInputMode::PressOnly, ContextTags);
+// Input binding: the mode comes from InputModes, event context from the character's CollectInputContext
+CadenceArcComponent->PressInput(InputTag);
+CadenceArcComponent->ReleaseInput(InputTag);
 
 // Executor: every action request arrives here, including the one produced when a buffered input is consumed
 void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)

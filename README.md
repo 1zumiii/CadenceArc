@@ -23,26 +23,26 @@ CadenceArc 只决定下一个动作是什么。动作的播放、伤害结算和
 ## 功能
 
 - **动作图**：以 `UDataAsset` 配置，用 Gameplay Tag 标识动作和输入，编辑器内自动校验。
-- **标准接入组件**：`UCadenceArcComponent` 自动处理时间戳、逐帧推进、按键配对和请求出口，开发者只需提供输入、上下文和执行器回调。
+- **标准接入组件**：`UCadenceArcComponent` 自动处理时间戳、逐帧推进、按键配对、输入方式和请求出口，并提供输入处理结果和按住结束通知。开发者只需配置一次输入方式和上下文来源，并实现执行器回调。
 - **两阶段握手**：执行器确认开始后，解析器才提交目标节点。执行器拒绝请求后，解析器清空候选请求，回到 `Ready`，保留原来的动作节点。
 - **输入缓冲**：缓冲窗口由执行器开关。缓冲区只有一格，新输入覆盖旧输入，可以设置过期时间。
 - **按住与蓄力**：同一按键可以根据按住时长触发不同动作，支持蓄力阶段、蓄力保护和自动释放。
 - **转移条件**：同一输入可以根据上下文 Tag 和停顿时长转到不同动作。上下文可以随输入事件提交，也可以由宿主持续设置；停顿时长从上一个动作完成时开始计算。多条转移同时满足时，按优先级选择；最高优先级出现并列时返回歧义结果，不按配置顺序选取。
 - **显式时间**：所有时间戳都由调用方传入，解析器不读取时钟。在相同的图配置和初始状态下，相同的输入、上下文、时间和生命周期调用产生相同的结果。
 - **运行时调试器**：仅在编辑器中可用。实时显示动作图、解析器状态和收到的输入，并逐条记录调用结果和失败原因，包括未满足的条件。
-- **自动化测试**：140 个 Unreal 自动化测试，覆盖时间边界、过期回调和失败时的状态保持。
 
 ## 快速开始
 
 1. 将本仓库放到项目的 `Plugins/CadenceArc` 目录（可以作为 Git 子模块），并在编辑器中启用插件。
 2. 在模块的 `Build.cs` 中添加依赖 `"CadenceArc"` 和 `"GameplayTags"`。
 3. 新建 `CadenceArcGraph` 数据资产，配置入口节点、节点和转移。
-4. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图。组件负责时间戳、逐帧推进、按键配对和请求出口。
+4. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图，在 `InputModes` 中为需要按住的输入配置 `HoldRelease`。组件负责时间戳、逐帧推进、按键配对和请求出口。需要方向等事件上下文时，让角色实现 `ICadenceArcInputContextProvider`。
 5. 在输入绑定中调用组件的 `PressInput` 和 `ReleaseInput`，执行器订阅 `OnActionRequested` 并回调动作的生命周期：
 
 ```cpp
-// 输入绑定
-CadenceArcComponent->PressInput(InputTag, ECadenceArcInputMode::PressOnly, ContextTags);
+// 输入绑定：输入方式来自 InputModes，事件上下文来自角色的 CollectInputContext
+CadenceArcComponent->PressInput(InputTag);
+CadenceArcComponent->ReleaseInput(InputTag);
 
 // 执行器：所有动作请求都从这里进入，包括完成时消费缓冲产生的请求
 void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)

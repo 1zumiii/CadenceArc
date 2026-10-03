@@ -62,3 +62,4 @@
 - 新增 `UCadenceArcComponent`，作为 UE 项目的标准接入方式。组件自动处理时间戳、逐帧推进、按键配对和请求出口，详见[CadenceArc 组件](Component.md)。直接调用 `UCadenceArcResolver` 的代码仍然有效，不需要修改。
 - CadenceArcSandbox 中的 `FCadenceArcHoldInputRouter` 已删除，功能并入 `UCadenceArcComponent`。参照 Sandbox 复制过这个类的项目，可以改用组件的 `PressInput`、`ReleaseInput` 和 `CancelInput`。原有的 9 项 `CadenceArc.Sandbox.HoldRouter.*` 测试已迁移为插件中的 `CadenceArc.Component.*` 测试。
 - Sandbox 的动作图从 `UCadenceArcDemoExecutorComponent::ComboGraph` 移到了角色上 CadenceArc 组件的 `Graph` 属性。
+- `UCadenceArcComponent` 的输入接口改为 `PressInput(Tag)` 和 `ReleaseInput(Tag)`：输入方式从 `InputModes` 读取，事件上下文从 `ICadenceArcInputContextProvider` 采集。需要直接传入上下文时，使用 `PressInputWithContext` 和 `ReleaseInputWithContext`。两个输入接口改为返回 `FCadenceArcInputResult`。
