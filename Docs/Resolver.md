@@ -1,12 +1,12 @@
 # 解析器：握手、缓冲与时间
 
-[返回首页](../README.zh-CN.md)
+[返回首页](../README.md)
 
-`UCadenceArcResolver` 把输入变成动作请求。它不执行动作，只跟踪请求的生命周期。本文说明宿主怎么和它配合。
+`UCadenceArcResolver` 根据输入生成动作请求，并跟踪请求的生命周期。动作由宿主执行。本文介绍宿主如何接入解析器。
 
 ## 两阶段握手
 
-图里找到一条转移，不代表动作一定能开始。执行器可能因为资源、状态或时机拒绝请求。所以解析和提交是两步：
+解析器找到转移后，执行器还需要检查动作所需的资源、状态和执行时机。因此，解析输入和提交目标节点分为两个阶段：
 
 ```text
 解析输入 -> 产出 ActionRequest -> 执行器接受或拒绝 -> Started 提交目标节点 -> 终止回调结束请求
@@ -38,7 +38,7 @@
 
 `Reset()` 只能在 `Ready` 调用，返回 `Success`、`NotInitialized` 或 `Busy`。
 
-无效的请求 ID、过期回调和状态不对的回调都会被拒绝，解析器状态不变。请求 ID 是单调递增的正数，`Reset` 和重新初始化都不会重置它，所以过期回调不可能对上更新的请求。
+请求 ID 无效、不匹配或当前状态不允许的回调都会被拒绝，解析器状态不变。请求 ID 是单调递增的正数，`Reset` 和重新初始化都不会重置它，以免旧回调影响后续请求。
 
 ### 请求内容
 
@@ -72,15 +72,15 @@ if (Completion.HasNextActionRequest())
 | 类别 | 含义 | 请求 |
 | --- | --- | --- |
 | `RequestProduced` | 找到候选转移，`Reason` 为 `None`。 | 候选请求 |
-| `Buffered` | 输入存进了缓冲格，`Reason` 为 `None`。 | 空 |
-| `NoAction` | 现在没有可走的转移，例如 `RequestPending`、`BufferWindowClosed`、`NoMatchingTransition`。 | 空 |
-| `Rejected` | 调用或图数据无效，原因看 `Reason`。 | 空 |
+| `Buffered` | 输入已存入缓冲槽，`Reason` 为 `None`。 | 空 |
+| `NoAction` | 本次未生成请求，例如已有待确认请求、缓冲窗口关闭或没有匹配的转移。具体原因由 `Reason` 提供。 | 空 |
+| `Rejected` | 调用被拒绝，例如参数无效、资格受保护或图存在歧义。具体原因由 `Reason` 提供。 | 空 |
 
-默认构造的结果永远不表示成功。判断有没有请求，用 `HasActionRequest()` / `HasNextActionRequest()`，不要看请求 ID。`UCadenceArcBlueprintLibrary` 把这些 getter 做成了 BlueprintPure 节点。
+默认构造的结果不表示成功。调用 `HasActionRequest()` 或 `HasNextActionRequest()` 判断是否有请求，避免仅凭请求 ID 判断。`UCadenceArcBlueprintLibrary` 为这些 getter 提供了 `BlueprintPure` 节点。
 
 ## 输入缓冲
 
-缓冲只有一格，后来的有效输入覆盖先前的（Last Input Wins）。有效输入的处理方式取决于状态：
+缓冲只有一个槽位，新接受的输入覆盖先前的输入（Last Input Wins）。普通按下输入的处理方式取决于状态；存在按住资格时，还需要通过蓄力保护等检查：
 
 | 状态 | 缓冲窗口 | 结果 |
 | --- | --- | --- |
@@ -89,17 +89,17 @@ if (Completion.HasNextActionRequest())
 | `Executing` | 打开 | 存进缓冲，返回 `Buffered / None`。 |
 | `Executing` | 关闭 | `NoAction / BufferWindowClosed`，已存的输入不变。 |
 
-执行器用 `OpenBufferWindow(RequestId)` 和 `CloseBufferWindow(RequestId)` 控制窗口。两者都要求当前执行中的请求 ID，所以过期的动画通知没有影响。关闭窗口会冻结已存的输入，不会清空它。
+执行器用 `OpenBufferWindow(RequestId)` 和 `CloseBufferWindow(RequestId)` 控制窗口。两者都要求当前执行中的请求 ID，因此旧请求的动画通知不会影响当前窗口。关闭窗口后，已有输入仍保留在缓冲槽中。
 
 动作完成时，`NotifyActionCompleted` 返回 `FCadenceArcActionCompletionOutcome`：
 
-- `GetHandshakeResult()`：回调是否对上了当前请求；
+- `GetHandshakeResult()`：完成回调是否通过握手校验；
 - `GetBufferConsumption()` / `GetBufferConsumptionReason()`：缓冲的解析结果，握手成功后才有意义；
 - `GetNextActionRequest()`：`HasNextActionRequest()` 为真时的下一个请求。
 
-缓冲被消费后，解析器直接进入 `AwaitingStart`。下一个动作仍要等 `NotifyActionStarted` 才提交。
+缓冲消费产生新请求时，解析器进入 `AwaitingStart`，等待 `NotifyActionStarted` 提交目标节点。输入过期、没有匹配边或条件不满足时，解析器保持 `Ready`。
 
-同一个缓冲格也存按住资格，见[按住输入](HoldInput.md)。
+同一个输入槽也用于保存按住资格，见[按住输入](HoldInput.md)。
 
 ## 时间与过期
 
@@ -110,24 +110,26 @@ FCadenceArcSubmitOutcome SubmitInput(const FCadenceArcInputEvent& InputEvent);
 FCadenceArcActionCompletionOutcome NotifyActionCompleted(int64 RequestId, double CompletionTimestampSeconds);
 ```
 
-输入和完成的时间戳必须在同一个不递减的时间域里。解析器从不读取 `UWorld`、平台时间或帧计数。选一致的时间域是适配层的事，例如 World 的游戏时间，它会随暂停停止，也跟随时间膨胀。
+输入和完成的时间戳必须使用同一个不递减的时间域。解析器不读取 `UWorld`、平台时间或帧计数。适配层负责选择并统一时间来源，例如随暂停和时间膨胀变化的 World 游戏时间。
 
-时间戳必须是有限的非负数，0 也有效。无效时返回 `InvalidTimestamp`，不覆盖已有的缓冲。
+输入时间戳必须是有限的非负数，0 也有效。输入时间戳无效时返回 `InvalidTimestamp`，不覆盖已有缓冲。完成时间的错误处理见下表。
 
-`UCadenceArcGraph::MaxBufferedInputAgeSeconds` 默认为 `0.0`，表示不限制缓冲时长。完成握手成功后：
+`UCadenceArcGraph::MaxBufferedInputAgeSeconds` 默认为 `0.0`，表示不限制缓冲时长。普通按下输入的缓冲在完成握手成功后按下表处理：
 
 | 条件 | 缓冲结果 | 之后的状态 |
 | --- | --- | --- |
 | 没有缓冲输入 | `NoAction / NoBufferedInput` | `Ready` |
 | 完成时间无效，或早于缓冲输入 | `Rejected / InvalidCompletionTime` | `Ready` |
 | 缓冲时长超过上限 | `NoAction / Expired` | `Ready` |
-| 没超过上限，或没开启上限 | 解析缓冲的输入 | 成功时 `AwaitingStart`，否则 `Ready` |
+| 未超过上限，或未设置上限 | 解析缓冲输入 | 产生请求时 `AwaitingStart`，否则 `Ready` |
 
-时长正好等于上限时仍然有效。`InvalidCompletionTime` 和 `Expired` 都会结束旧动作，清空请求、窗口和缓冲，保留已提交的节点。握手失败时状态完全不变。
+缓冲时长等于上限时仍然有效。对于普通按下输入的缓冲，`InvalidCompletionTime` 和 `Expired` 都属于握手成功后的消费结果：旧动作结束，请求、窗口和缓冲被清空，已提交的节点保留。
+
+存在待松手资格或松手缓冲时，无效完成时间会直接拒绝握手，返回 `ECadenceArcHandshakeResult::InvalidCompletionTime`，状态保持不变。待松手资格在正常完成后仍然保留，消费结果为 `NoAction / WaitingForRelease`。
 
 ## 转移条件
 
-图里的边可以带上下文条件、停顿区间和优先级，规则见[动作图](Graph.md#转移条件与优先级)。本节说明这些条件的输入从哪来、什么时候求值。
+转移可以配置上下文条件、停顿区间和优先级，规则见[动作图](Graph.md#转移条件与优先级)。本节介绍条件数据的来源和求值时机。
 
 ### 上下文的两个来源
 
@@ -140,30 +142,33 @@ FCadenceArcActionCompletionOutcome NotifyActionCompleted(int64 RequestId, double
 
 ### 停顿
 
-停顿时长 = 输入的时间戳 − 最近一次成功的 `NotifyActionCompleted` 的时间戳。
+`Ready` 状态下，普通按下输入的停顿时长等于输入时间戳减去最近一次成功完成回调记录的有效时间戳。缓冲和按住输入采用下面的规则。
 
-执行器把 `Completed` 放在哪里，停顿就从哪里算起：放在硬直开始，停顿从招式判定结束算；放在蒙太奇播完，就从动画结束算。不同动作游戏两种做法都有，所以框架不替你选，请在执行器里写清楚。
+停顿起点由执行器发送 `NotifyActionCompleted` 的时机决定。例如，执行器可以在动作判定结束或蒙太奇播放结束时发送完成回调。请在执行器中明确这一约定。
 
-- 动作执行中按下、进了缓冲的输入，停顿按 0 算。下限大于 0 的停顿边不会被缓冲输入选中；`[0, 0.3)` 这类包含 0 的区间可以。
-- 按住的停顿从按下时刻算，不包含蓄力时长。在上一招里按下、完成后才松手，按 0 算。
-- 还没有起点时（刚初始化、`Reset`、取消或打断之后），带停顿区间的边一律不满足。执行器拒绝请求（`NotifyActionRejected`）不清除起点。
+- 缓冲输入在动作完成时解析，停顿时长为 0。下限大于 0 的停顿区间不会匹配；`[0, 0.3)` 这类包含 0 的区间可以匹配。
+- 按住输入在 `Ready` 下解析时，停顿时长为 `Max(0, 按下时间 − 最近完成时间)`，不包含蓄力时长。在前一个动作执行期间按下、完成后松手的输入，停顿时长为 0。
+- 没有有效起点时（刚初始化、`Reset`、取消或打断之后），带停顿区间的边不满足条件。执行器拒绝请求（`NotifyActionRejected`）不清除起点。
 
 ### 求值时机
 
 | 情况 | 事件上下文 | 持久上下文 | 停顿 |
 | --- | --- | --- | --- |
-| `Ready` 时提交输入 | 这次输入的 | 当时的 | 按公式算 |
-| 缓冲的输入，在动作完成时解析 | 按下时的，随缓冲保存 | 完成时的 | 0 |
-| 手动松手 | 松手事件的 | 松手时的 | 从按下算 |
-| 自动松手（蓄满到上限） | 按下时的 | 自动松手时的 | 从按下算 |
+| `Ready` 时提交普通按下输入 | 本次输入事件的上下文 | 解析时的值 | 输入时间减去最近完成时间 |
+| 普通按下输入的缓冲 | 按下事件的上下文，随缓冲保存 | 完成回调消费缓冲时的值 | 0 |
+| 手动松手，在 `Ready` 下立即解析 | 松手事件的上下文 | 解析时的值 | 按下时间减去最近完成时间，最小为 0 |
+| 自动松手，在 `Ready` 下立即解析 | 按下事件的上下文 | 实际处理自动松手时的值 | 按下时间减去最近完成时间，最小为 0 |
+| 手动或自动松手产生的缓冲 | 手动松手保留松手上下文；自动松手保留按下上下文 | 完成回调消费缓冲时的值 | 0 |
 
-授予按住资格时不看条件，只看这个 Tag 在当前节点有没有 `Released` 边。否则按下时没按方向，整次蓄力就会被拒绝。
+申请按住资格时，解析器检查源节点配置，以及当前 Tag 是否有 `Released` 边，但不求值上下文和停顿条件。因此，玩家可以先按住攻击键，再在松手前改变方向。
 
 ### 条件相关的原因
 
 | 原因 | 类别 | 含义 |
 | --- | --- | --- |
-| `ConditionNotMet` | `NoAction` | 有 Tag、阶段和时长都对上的边，但上下文或停顿条件全部不满足 |
-| `AmbiguousTransition` | `Rejected` | 满足条件的边里，最高优先级有多条 |
+| `ConditionNotMet` | `NoAction` | 有输入 Tag、阶段和时长均匹配的边，但上下文或停顿条件全部不满足 |
+| `AmbiguousTransition` | `Rejected` | 满足条件的候选边中，有多条边具有最高优先级 |
 
-`ConditionNotMet` 和 `NoMatchingTransition` 分开，是为了区分“图里根本没这个输入”和“有这个输入，但条件不对”。`AmbiguousTransition` 正常情况下会被图校验提前拦住，只有初始化后资产被改坏时才会出现。两者都不改变解析器状态。
+`NoMatchingTransition` 表示没有边匹配输入 Tag、阶段和按住时长；`ConditionNotMet` 表示通过这些检查的边均未满足上下文或停顿条件。图校验会提前拒绝同优先级的重叠转移，运行时的 `AmbiguousTransition` 检查用于防护初始化后的配置修改等情况。
+
+这些选边失败都不会生成请求或提交目标节点。状态变化取决于调用入口：`Ready` 下直接提交普通输入时保留已有状态；有效松手仍会结束按住资格；完成回调仍会结束旧动作并消费缓冲。

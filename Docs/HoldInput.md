@@ -1,23 +1,25 @@
 # 按住输入
 
-[返回首页](../README.zh-CN.md)
+[返回首页](../README.md)
 
-按住输入让同一个键按不同时长触发不同招式，例如轻点和蓄力攻击。本文说明图怎么配置、宿主每帧要做什么，以及几条容易踩的规则。
+按住输入根据按键持续时间触发不同动作，例如轻按攻击和蓄力攻击。本文介绍图配置、宿主的逐帧处理流程和接入注意事项。
 
 ## 概念
 
-一次 **Hold** 是一次从按下到松开的过程，用 `FCadenceArcInputToken` 标识。按下立刻松开也算一次 Hold。
+一次 Hold 是从按下到松开的完整过程，由 `FCadenceArcInputToken` 标识。按下后立即松开也属于一次 Hold。
 
 - `FCadenceArcInputTracker` 负责物理按下和松开的配对，并测量按住时长。
-- 解析器负责**按住资格**：按下时申请，松开时结算成动作请求。
+- 解析器负责管理按住资格：按下时申请，松开时根据输入和条件解析动作请求。
 - `ECadenceArcInputMode::PressOnly` 在按下时提交；`HoldRelease` 在按下时申请资格，在手动或自动松手时结算。
 - `ECadenceArcHoldStage` 有 `None`、`Holding`、`Charging` 和 `Charged`，由时间推导，不单独存储。
 
 ## 图配置
 
-转移可以设置 `InputPhase` 和左闭右开的 `DurationRange`（`[Min, Max)`，或没有上限）。同一源节点、同一 Tag、同一阶段的区间不能重叠，可以相邻或留空隙。这样一个键就能有多个松手档位。
+Released 转移可以启用 `DurationRange`，按左闭右开的区间 `[Min, Max)` 匹配按住时长，也可以不设置上限。同一输入可以有多个松手档位，区间可以相邻或存在间隔。区间重叠时，还需通过优先级、上下文条件和停顿区间的校验，详见[动作图与校验](Graph.md#校验)。
 
-`FCadenceArcNode::HoldChargeConfigs` 里可以放 `FCadenceArcHoldChargeConfig`，给某个输入 Tag 加上蓄力保护和自动松手时间。满蓄阈值取这个 Tag 唯一一条无上限 Released 区间的下限。
+在 `FCadenceArcNode::HoldChargeConfigs` 中添加 `FCadenceArcHoldChargeConfig`，可以为某个输入 Tag 启用蓄力保护和自动释放。配置后，该 Tag 的所有 Released 边都必须启用按住时长区间，且至少有一条无上限区间。所有无上限分支共用一个正数下限，作为满蓄力阈值。
+
+`ChargeStartSeconds` 指定开始蓄力的时长，必须小于满蓄力阈值。`MaxChargedHoldSeconds` 指定满蓄力后还可以保持多久；为 0 时，达到满蓄力阈值便自动释放。未配置 `HoldChargeConfigs` 时，输入仍可按松手时长选择动作，但不启用蓄力保护和自动释放。
 
 ## 解析器 API
 
@@ -31,10 +33,10 @@ FCadenceArcHoldSnapshot        GetInputHoldSnapshot() const;
 
 | 调用 | 何时接受 | 效果 |
 | --- | --- | --- |
-| `BeginInputHold` | `Ready`，或窗口打开的 `Executing` | 存下一份资格，冻结这个 Tag 的 Released 边、蓄力配置和缓冲时长上限。 |
-| `AdvanceInputTime` | 任何状态，时间有限且不递减 | 按顺序报告越过的阈值，到期时自动松手一次。没有资格时是空操作。 |
+| `BeginInputHold` | `Ready`，或窗口打开的 `Executing`；通过输入、配置和现有资格的检查 | 保存资格，并复制该 Tag 的 Released 边、蓄力配置和缓冲时长上限。 |
+| `AdvanceInputTime` | 已初始化，时间有限且非负；存在资格时，不早于该资格的最近观察时间 | 按顺序报告经过的阈值，到期时自动释放一次。没有待松手资格时接受调用，但不改变业务状态。 |
 | `ReleaseInputHold` | Token 匹配，且事件是同一 Tag 的 `Released` 事件 | 结束资格。`Ready` 时立即解析，`Executing` 时存为缓冲。 |
-| `CancelInputHold` | Token 匹配 | 清空缓冲格，不合成松手，不撤回已提交的请求。 |
+| `CancelInputHold` | Token 与当前按住资格或其松手缓冲匹配 | 清空对应输入槽，不合成松手事件，也不撤回已产生的请求。 |
 
 宿主每帧**先推进时间**，处理完结果，再处理输入和生命周期回调：
 
@@ -42,7 +44,7 @@ FCadenceArcHoldSnapshot        GetInputHoldSnapshot() const;
 const FCadenceArcInputAdvanceOutcome Advance = Resolver->AdvanceInputTime(NowSeconds);
 for (const FCadenceArcInputStageChange& Change : Advance.GetStageChanges())
 {
-    // 蓄力反馈按 Change.EffectiveTimestampSeconds 播放，而不是 NowSeconds。
+    // 使用 Change.EffectiveTimestampSeconds 作为蓄力反馈的生效时间。
 }
 if (Advance.HasActionRequest())
 {
@@ -52,27 +54,27 @@ if (Advance.HasActionRequest())
 
 ## 规则
 
-**一次按下最多兑现一个动作。** 自动松手之后，物理松手返回 `NoMatchingHold`。
+一次按下最多产生一个动作请求。自动释放结束资格后，再用同一 Token 调用 `ReleaseInputHold`，会返回 `NoMatchingHold`。
 
-**蓄力不会因为前一个动作结束而降级。** 资格在窗口关闭和正常完成后仍然保留，完成时报告 `NoAction / WaitingForRelease`。
+关闭缓冲窗口和正常完成动作都保留待松手资格，蓄力计时继续。存在待松手资格时，完成回调报告 `NoAction / WaitingForRelease`。
 
-**蓄力中其他输入被挡住。** `Charging` 或 `Charged` 期间，图里的其他输入返回 `HoldProtected`。闪避、格挡这类打断应该直接调用 `CancelInputHold`，不要走图。没有蓄力配置的按住停在 `Holding`，可以被任何被接受的输入替换。
+资格处于 `Charging` 或 `Charged` 时，新输入通过状态准入检查后，仍会因蓄力保护返回 `HoldProtected`。宿主需要通过闪避、格挡等操作打断蓄力时，应调用 `CancelInputHold`。没有蓄力配置的资格保持 `Holding`，可以由新接受的输入替换。
 
-**自动松手到期后要先推进时间。** 这时 `SubmitInput`、`BeginInputHold` 返回 `Rejected / InputTimeAdvanceRequired`，`NotifyActionCompleted` 返回握手结果 `InputTimeAdvanceRequired`，都没有副作用。调用 `AdvanceInputTime` 处理结果后再重试。
+自动释放到期后，宿主应先调用 `AdvanceInputTime` 并处理结果。若仍有到期资格未处理，新输入在通过状态准入检查后会返回 `Rejected / InputTimeAdvanceRequired`；有效完成回调也会以握手结果 `InputTimeAdvanceRequired` 拒绝。这些拒绝不修改业务状态。
 
-**按住期间改资产不影响这次按下。** 松手匹配用的是资格里冻结的边副本。
+松手解析使用授予资格时保存的转移副本。按住期间修改资产上的转移条件、优先级或时长配置，不会改变这份副本。目标节点是否存在仍按当前图检查，持久上下文仍取实际解析时的值。
 
-**松手没匹配或已过期，资格也结束。** 不会退回待定状态。
+有效松手会结束按住资格，即使解析时没有匹配边、条件不满足或输入已经过期，也不会恢复该资格。
 
-**时长由解析器自己算。** 传给 `ReleaseInputHold` 的按住时长，必须等于一次 `double` 运算得到的 `TimestampSeconds - PressedTimestampSeconds`。
+宿主或 Tracker 负责填写松手事件的按住时长。解析器会校验 `HeldDurationSeconds` 是否等于一次 `double` 运算得到的 `TimestampSeconds - PressedTimestampSeconds`，不一致时返回 `InvalidInputEvent`。
 
-**阈值时刻精确对齐。** 开始蓄力、满蓄、自动松手的时刻，是按住时长第一次达到阈值的 `double` 时间。快照报告 `Charged` 时，此刻松手选中的档位一定一致，0.2、0.8 这样的小数阈值也一样。
+开始蓄力、满蓄力和自动释放的时间点，按持续时间首次达到对应阈值的可表示 `double` 时间计算。这保证了阶段判断与按住时长区间在 0.2、0.8 等小数阈值处一致。最终能否产生动作请求，还取决于上下文条件、停顿区间和优先级。
 
-**改坏的资产不会授予资格。** `BeginInputHold` 授予前会校验源节点，失败返回 `InvalidGraphConfiguration`。
+`BeginInputHold` 在授予资格前校验源节点，配置无效时返回 `InvalidGraphConfiguration`。
 
 ## 宿主接入注意事项
 
-- 把某个键设成 `HoldRelease` 后，当前节点必须有这个 Tag 的 `Released` 转移。只有 `Pressed` 边的节点会以 `NoMatchingTransition` 拒绝 `BeginInputHold`。
-- 资格已经结束时（被拒、自动松手、被替换或取消），物理松手会返回 `NoMatchingHold`，调试历史里显示为失败。Sandbox 的输入路由先用 `GetInputHoldSnapshot()` 确认资格还是自己的 Token，再调用 `ReleaseInputHold`。
-- 宿主一直没送来物理松手时，资格会一直待定。游戏在按住期间失去控制（取消控制 Pawn、窗口焦点吞掉松手）时，应该调用 `CancelInputHold` 并清空追踪器。这些情况下 Enhanced Input 发 `Completed` 还是 `Canceled`，还没有验证过。
-- Unreal 用 MSVC 的 `/fp:fast` 编译。需要精确浮点舍入的代码要显式开启，例如 `CadenceArcHoldTiming.cpp` 里的 `#pragma float_control(precise, on)`。
+- 将某个键设为 `HoldRelease` 后，当前节点必须有该 Tag 的 `Released` 转移。只有 `Pressed` 边时，`BeginInputHold` 返回 `NoMatchingTransition`。
+- 资格申请失败或资格已经结束时，再调用 `ReleaseInputHold` 会返回 `NoMatchingHold`，调试历史将其标记为失败。Sandbox 的输入路由先用 `GetInputHoldSnapshot()` 确认 Token 是否仍然匹配，再提交松手事件。
+- 如果未收到物理松手，且没有触发自动释放或其他清理操作，资格会持续保留。宿主在按住期间失去控制时，例如取消控制 Pawn 或窗口失焦，应取消仍有效的资格，并清理输入追踪状态。这些情况下 Enhanced Input 触发 `Completed` 还是 `Canceled`，目前尚未验证。
+- 使用 MSVC 的 `/fp:fast` 编译时，需要精确浮点舍入的代码应显式启用精确模式。例如，`CadenceArcHoldTiming.cpp` 使用 `#pragma float_control(precise, on)` 保护阈值计算。
