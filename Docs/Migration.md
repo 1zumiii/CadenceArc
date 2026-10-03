@@ -56,3 +56,9 @@
 
 - `FCadenceArcInputEvent` 从 `Resolver/CadenceArcResolverTypes.h` 移到 `Input/CadenceArcInputTypes.h`。结构体名称和所在模块不变，蓝图和资产不受影响。`CadenceArcResolverTypes.h` 仍包含新的定义文件，因此原有包含方式仍然有效。
 - `Input/CadenceArcInputTrackingTypes.h` 不再包含 `Resolver/CadenceArcResolverTypes.h`。如果代码仅包含 Tracker 头文件，却使用了 `FCadenceArcSubmitOutcome` 等解析器类型，需要显式添加 `#include "Resolver/CadenceArcResolverTypes.h"`。
+
+## 标准接入组件（0.4.0 之后）
+
+- 新增 `UCadenceArcComponent`，作为 UE 项目的标准接入方式。组件自动处理时间戳、逐帧推进、按键配对和请求出口，详见[CadenceArc 组件](Component.md)。直接调用 `UCadenceArcResolver` 的代码仍然有效，不需要修改。
+- CadenceArcSandbox 中的 `FCadenceArcHoldInputRouter` 已删除，功能并入 `UCadenceArcComponent`。参照 Sandbox 复制过这个类的项目，可以改用组件的 `PressInput`、`ReleaseInput` 和 `CancelInput`。原有的 9 项 `CadenceArc.Sandbox.HoldRouter.*` 测试已迁移为插件中的 `CadenceArc.Component.*` 测试。
+- Sandbox 的动作图从 `UCadenceArcDemoExecutorComponent::ComboGraph` 移到了角色上 CadenceArc 组件的 `Graph` 属性。

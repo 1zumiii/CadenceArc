@@ -46,7 +46,9 @@
 
 ## 执行器接入
 
-一个最小的执行器：
+UE 项目通常通过 [CadenceArc 组件](Component.md) 接入，组件会自动传入时间、逐帧推进并统一请求出口。本节介绍直接调用解析器的方式，适用于测试、回放和自定义时间来源的场景。
+
+直接调用解析器时，一个最小的执行器如下：
 
 ```cpp
 const FCadenceArcSubmitOutcome Submit = Resolver->SubmitInput(InputEvent);

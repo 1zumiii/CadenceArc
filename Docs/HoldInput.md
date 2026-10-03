@@ -38,7 +38,7 @@ FCadenceArcHoldSnapshot        GetInputHoldSnapshot() const;
 | `ReleaseInputHold` | Token 匹配，且事件是同一 Tag 的 `Released` 事件 | 结束资格。`Ready` 时立即解析，`Executing` 时存为缓冲。 |
 | `CancelInputHold` | Token 与当前按住资格或其松手缓冲匹配 | 清空对应输入槽，不合成松手事件，也不撤回已产生的请求。 |
 
-宿主每帧**先推进时间**，处理完结果，再处理输入和生命周期回调：
+使用 [CadenceArc 组件](Component.md) 时，下面的逐帧推进、Token 生成和松手提交都由组件完成，阶段变化通过 `OnHoldStageChanged` 发出。直接使用解析器时，宿主每帧**先推进时间**，处理完结果，再处理输入和生命周期回调：
 
 ```cpp
 const FCadenceArcInputAdvanceOutcome Advance = Resolver->AdvanceInputTime(NowSeconds);

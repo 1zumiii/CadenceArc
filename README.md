@@ -2,7 +2,7 @@
 
 简体中文 | [English](README.en.md)
 
-CadenceArc 是一个面向 Unreal Engine 5 的分支连招框架。开发者在动作图中配置各动作接受的输入和后续动作。框架根据这些配置生成动作请求，交给项目的执行系统处理。
+CadenceArc 是一个面向 Unreal Engine 5 的数据驱动连招解析框架。连招规则以动作图的形式配置在 DataAsset 中，输入和动作均使用语义化的 GameplayTag 标识。宿主将输入事件和动作生命周期回调提交给解析器，解析器依据动作图生成动作请求，交由外部执行系统处理。框架本身不依赖特定的外部执行方式（如 GAS、蒙太奇等）。
 
 ![PIE 连招中的 Arc Debugger：带条件的转移、输入显示和 Arc History](Docs/Images/arc-debugger-overview.png)
 
@@ -23,39 +23,41 @@ CadenceArc 只决定下一个动作是什么。动作的播放、伤害结算和
 ## 功能
 
 - **动作图**：以 `UDataAsset` 配置，用 Gameplay Tag 标识动作和输入，编辑器内自动校验。
+- **标准接入组件**：`UCadenceArcComponent` 自动处理时间戳、逐帧推进、按键配对和请求出口，开发者只需提供输入、上下文和执行器回调。
 - **两阶段握手**：执行器确认开始后，解析器才提交目标节点。执行器拒绝请求后，解析器清空候选请求，回到 `Ready`，保留原来的动作节点。
 - **输入缓冲**：缓冲窗口由执行器开关。缓冲区只有一格，新输入覆盖旧输入，可以设置过期时间。
 - **按住与蓄力**：同一按键可以根据按住时长触发不同动作，支持蓄力阶段、蓄力保护和自动释放。
 - **转移条件**：同一输入可以根据上下文 Tag 和停顿时长转到不同动作。上下文可以随输入事件提交，也可以由宿主持续设置；停顿时长从上一个动作完成时开始计算。多条转移同时满足时，按优先级选择；最高优先级出现并列时返回歧义结果，不按配置顺序选取。
 - **显式时间**：所有时间戳都由调用方传入，解析器不读取时钟。在相同的图配置和初始状态下，相同的输入、上下文、时间和生命周期调用产生相同的结果。
 - **运行时调试器**：仅在编辑器中可用。实时显示动作图、解析器状态和收到的输入，并逐条记录调用结果和失败原因，包括未满足的条件。
-- **自动化测试**：130 个 Unreal 自动化测试，覆盖时间边界、过期回调和失败时的状态保持。
+- **自动化测试**：140 个 Unreal 自动化测试，覆盖时间边界、过期回调和失败时的状态保持。
 
 ## 快速开始
 
 1. 将本仓库放到项目的 `Plugins/CadenceArc` 目录（可以作为 Git 子模块），并在编辑器中启用插件。
 2. 在模块的 `Build.cs` 中添加依赖 `"CadenceArc"` 和 `"GameplayTags"`。
 3. 新建 `CadenceArcGraph` 数据资产，配置入口节点、节点和转移。
-4. 在执行器中创建解析器，接入输入和生命周期回调：
+4. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图。组件负责时间戳、逐帧推进、按键配对和请求出口。
+5. 在输入绑定中调用组件的 `PressInput` 和 `ReleaseInput`，执行器订阅 `OnActionRequested` 并回调动作的生命周期：
 
 ```cpp
-Resolver = NewObject<UCadenceArcResolver>(this);
-Resolver->Initialize(ComboGraph);
+// 输入绑定
+CadenceArcComponent->PressInput(InputTag, ECadenceArcInputMode::PressOnly, ContextTags);
 
-// 提交输入：可能立即产出请求
-const FCadenceArcSubmitOutcome Submit = Resolver->SubmitInput(InputEvent);
-if (Submit.HasActionRequest())
+// 执行器：所有动作请求都从这里进入，包括完成时消费缓冲产生的请求
+void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 {
-    StartRequest(Submit.GetActionRequest()); // 能执行时调用 NotifyActionStarted，否则调用 NotifyActionRejected
-}
-
-// 动作完成：缓冲中的输入可能产出下一个请求
-const FCadenceArcActionCompletionOutcome Completion = Resolver->NotifyActionCompleted(RequestId, NowSeconds);
-if (Completion.HasNextActionRequest())
-{
-    StartRequest(Completion.GetNextActionRequest());
+    if (!CanPlay(Request.TargetActionTag))
+    {
+        CadenceArcComponent->NotifyActionRejected(Request.RequestId);
+        return;
+    }
+    CadenceArcComponent->NotifyActionStarted(Request.RequestId);
+    PlayAction(Request); // 动作结束时调用 CadenceArcComponent->NotifyActionCompleted(Request.RequestId)
 }
 ```
+
+组件的完整接口见[CadenceArc 组件](Docs/Component.md)。测试、回放等需要直接控制时间的场景，可以绕过组件直接使用 `UCadenceArcResolver`。
 
 完整示例见 [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox)。它使用 Enhanced Input 和基于 Timer 的演示执行器驱动 CadenceArc，包含按住输入和转移条件的演示。
 
@@ -63,6 +65,7 @@ if (Completion.HasNextActionRequest())
 
 | 文档 | 内容 |
 | --- | --- |
+| [CadenceArc 组件](Docs/Component.md) | 标准接入方式：组件的职责、接入步骤、接口和时间来源 |
 | [解析器：握手、缓冲与时间](Docs/Resolver.md) | 状态与生命周期、执行器接入、结果类型、缓冲窗口、时间与过期、上下文与停顿 |
 | [按住输入](Docs/HoldInput.md) | 松手档位、蓄力配置、逐帧推进、宿主接入注意事项 |
 | [动作图与校验](Docs/Graph.md) | 图的字段、转移条件与优先级、校验规则 |
