@@ -36,7 +36,7 @@ CadenceArc 只决定下一个动作是什么。动作的播放、伤害结算和
 1. 将本仓库放到项目的 `Plugins/CadenceArc` 目录（可以作为 Git 子模块），并在编辑器中启用插件。
 2. 在模块的 `Build.cs` 中添加依赖 `"CadenceArc"` 和 `"GameplayTags"`。
 3. 新建 `CadenceArcGraph` 数据资产，配置入口节点、节点和转移。
-4. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图，在 `InputModes` 中为需要按住的输入配置 `HoldRelease`。组件负责时间戳、逐帧推进、按键配对和请求出口。需要方向等事件上下文时，让角色实现 `ICadenceArcInputContextProvider`。
+4. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图，在 `InputModes` 中为需要按住的输入配置 `HoldRelease`，只在部分动作中蓄力的输入配置 `HoldIfAvailable`。组件负责时间戳、逐帧推进、按键配对和请求出口。需要方向等事件上下文时，让角色实现 `ICadenceArcInputContextProvider`。
 5. 在输入绑定中调用组件的 `PressInput` 和 `ReleaseInput`，执行器订阅 `OnActionRequested` 并回调动作的生命周期：
 
 ```cpp

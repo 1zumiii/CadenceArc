@@ -109,6 +109,21 @@ bool UCadenceArcComponent::HasInitializedResolver() const
 	return Resolver && Resolver->IsInitialized();
 }
 
+bool UCadenceArcComponent::IsInitialized() const
+{
+	return HasInitializedResolver();
+}
+
+ECadenceArcResolverState UCadenceArcComponent::GetState() const
+{
+	return Resolver ? Resolver->GetState() : ECadenceArcResolverState::Uninitialized;
+}
+
+FGameplayTag UCadenceArcComponent::GetCurrentActionTag() const
+{
+	return HasInitializedResolver() ? Resolver->GetCurrentActionTag() : FGameplayTag();
+}
+
 double UCadenceArcComponent::GetTimeSeconds() const
 {
 	if (TimeSource)
@@ -188,6 +203,13 @@ bool UCadenceArcComponent::AdvanceAndDispatch(const double Now)
 
 void UCadenceArcComponent::DispatchRequest(const FCadenceArcActionRequest& Request)
 {
+	if (!OnActionRequestedNative.IsBound() && !OnActionRequested.IsBound())
+	{
+		// 没有执行器时请求会一直停在 AwaitingStart，之后的输入都返回 RequestPending
+		UE_LOG(LogCadenceArc, Warning,
+		       TEXT("%s: action request %lld (%s -> %s) has no handler. Bind an executor to OnActionRequested."),
+		       *GetPathName(), Request.RequestId, *Request.SourceActionTag.ToString(), *Request.TargetActionTag.ToString());
+	}
 	OnActionRequestedNative.Broadcast(Request);
 	OnActionRequested.Broadcast(Request);
 }
@@ -308,9 +330,10 @@ FCadenceArcInputResult UCadenceArcComponent::PressInputInternal(
 		return MakeInputResult(ECadenceArcInputStatus::AlreadyPressed);
 	}
 
-	// HoldRelease 的键只在当前节点有 Released 转移时等待松开；否则和 PressOnly 一样立即提交
-	const bool bHold = GetInputMode(InputTag) == ECadenceArcInputMode::HoldRelease
-		&& CurrentNodeHasReleasedEdge(InputTag);
+	// HoldRelease 始终申请按住资格；HoldIfAvailable 只在当前节点有 Released 转移时申请，否则立即提交
+	const ECadenceArcInputMode Mode = GetInputMode(InputTag);
+	const bool bHold = Mode == ECadenceArcInputMode::HoldRelease
+		|| (Mode == ECadenceArcInputMode::HoldIfAvailable && CurrentNodeHasReleasedEdge(InputTag));
 	PressedByTag.Add(InputTag, FTrackedPress{Pressed.GetToken(), bHold});
 
 	// Tracker 只负责配对和时间；上下文写进事件副本，由解析器随缓冲和资格一起保存

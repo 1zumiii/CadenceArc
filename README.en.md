@@ -36,7 +36,7 @@ CadenceArc only decides which move comes next. How an action plays, deals damage
 1. Put this repository at `Plugins/CadenceArc` in your project (a Git submodule works) and enable the plugin.
 2. Add `"CadenceArc"` and `"GameplayTags"` to your module's `Build.cs` dependencies.
 3. Create a `CadenceArcGraph` data asset with an entry node, nodes, and transitions.
-4. Add a `UCadenceArcComponent` to your character, assign the graph to its `Graph` property, and set `HoldRelease` in `InputModes` for inputs that wait for release. The component handles timestamps, per-frame advance, press/release pairing, and the request outlet. If you need event context such as direction, implement `ICadenceArcInputContextProvider` on the character.
+4. Add a `UCadenceArcComponent` to your character, assign the graph to its `Graph` property, and set `HoldRelease` in `InputModes` for inputs that always wait for release, or `HoldIfAvailable` for inputs that only charge in some actions. The component handles timestamps, per-frame advance, press/release pairing, and the request outlet. If you need event context such as direction, implement `ICadenceArcInputContextProvider` on the character.
 5. Call `PressInput` and `ReleaseInput` from your input bindings. Your executor subscribes to `OnActionRequested` and reports the action lifecycle back:
 
 ```cpp

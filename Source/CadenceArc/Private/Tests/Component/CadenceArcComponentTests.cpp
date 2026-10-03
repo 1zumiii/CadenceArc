@@ -625,11 +625,27 @@ namespace CadenceArc::Tests
 		FComponentHost Host;
 		UCadenceArcComponent* Component = NewObject<UCadenceArcComponent>();
 		Host.Bind(Component);
-		Component->SetInputMode(Input_Heavy, ECadenceArcInputMode::HoldRelease);
+		Component->SetInputMode(Input_Heavy, ECadenceArcInputMode::HoldIfAvailable);
 		if (!TestEqual(TEXT("Fallback graph initializes"), static_cast<int32>(Component->InitializeResolver(Graph)),
 		               static_cast<int32>(ECadenceArcResolverInitResult::Success)))
 		{
 			return false;
+		}
+
+		// 同一张图上，严格的 HoldRelease 不回退：申请被拒绝，按键配对保留到松开
+		{
+			FComponentHost StrictHost;
+			UCadenceArcComponent* Strict = NewObject<UCadenceArcComponent>();
+			StrictHost.Bind(Strict);
+			Strict->SetInputMode(Input_Heavy, ECadenceArcInputMode::HoldRelease);
+			Strict->InitializeResolver(Graph);
+			StrictHost.Now = 1.0;
+			const FCadenceArcInputResult StrictPress = Strict->PressInput(Input_Heavy);
+			TestEqual(TEXT("Strict hold has no action"), StatusOf(StrictPress), StatusValue(ECadenceArcInputStatus::NoAction));
+			TestEqual(TEXT("Strict hold reason"), static_cast<int32>(StrictPress.Reason),
+			          static_cast<int32>(ECadenceArcResolutionReason::NoMatchingTransition));
+			TestTrue(TEXT("Strict hold keeps the pairing"), Strict->IsInputPressed(Input_Heavy));
+			ExpectStarted(*this, TEXT("Strict hold"), StrictHost, {});
 		}
 
 		Host.Now = 1.0;
@@ -871,6 +887,46 @@ namespace CadenceArc::Tests
 			Host.Now = 2.0;
 			Component->ReleaseInput(Input_Heavy);
 			ExpectEnded(TEXT("Release after completion"), Host, {TEXT("Heavy:Released")});
+		}
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcComponentStatusTest,
+		"CadenceArc.Component.StatusQueriesAndMissingExecutor",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcComponentStatusTest::RunTest(const FString& Parameters)
+	{
+		// 普通 UI 不需要访问解析器就能读到状态
+		UCadenceArcComponent* Unready = NewObject<UCadenceArcComponent>();
+		TestFalse(TEXT("Not initialized"), Unready->IsInitialized());
+		TestEqual(TEXT("Uninitialized state"), static_cast<int32>(Unready->GetState()),
+		          static_cast<int32>(ECadenceArcResolverState::Uninitialized));
+		TestFalse(TEXT("No current action"), Unready->GetCurrentActionTag().IsValid());
+
+		{
+			FComponentHost Host;
+			UCadenceArcComponent* Component = MakeHostedComponent(*this, Host);
+			TestTrue(TEXT("Initialized"), Component->IsInitialized());
+			TestEqual(TEXT("Ready at entry"), Component->GetCurrentActionTag().ToString(), Action_Root.GetTag().ToString());
+			Host.Now = 1.0;
+			Component->PressInput(Input_Light);
+			TestEqual(TEXT("Executing after start"), static_cast<int32>(Component->GetState()),
+			          static_cast<int32>(ECadenceArcResolverState::Executing));
+			TestEqual(TEXT("Current action follows the start"), Component->GetCurrentActionTag().ToString(),
+			          Action_Light01.GetTag().ToString());
+		}
+
+		// 没有执行器订阅请求：给出诊断，请求停在 AwaitingStart
+		{
+			UCadenceArcComponent* Component = NewObject<UCadenceArcComponent>();
+			Component->SetTimeSource([]() { return 1.0; });
+			Component->InitializeResolver(MakeComponentGraph(1.0));
+			AddExpectedMessage(TEXT("has no handler"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+			Component->PressInput(Input_Light);
+			TestEqual(TEXT("Request waits without an executor"), static_cast<int32>(Component->GetState()),
+			          static_cast<int32>(ECadenceArcResolverState::AwaitingStart));
 		}
 		return !HasAnyErrors();
 	}

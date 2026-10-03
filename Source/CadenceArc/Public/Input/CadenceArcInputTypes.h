@@ -17,7 +17,11 @@ enum class ECadenceArcInputMode : uint8
 	// 按下时直接提交输入，不等待松手来判定持续时间。
 	PressOnly = 0,
 	// 按下时申请保持资格，在手动或自动释放时按持续时间结算；短按也属于此模式。
-	HoldRelease
+	// 当前节点没有该输入的 Released 转移时，申请被拒绝（NoMatchingTransition）。
+	HoldRelease,
+	// 按节点选择：当前节点有该输入的 Released 转移时与 HoldRelease 相同，否则与 PressOnly 相同。
+	// 判断只看 Released 转移是否存在，不评估它们的条件：按下时还不知道松开时的上下文和按住时长。
+	HoldIfAvailable
 };
 
 // Resolver 中有效按住资格的观察阶段，由时间和可选蓄力配置推导。

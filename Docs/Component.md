@@ -27,7 +27,7 @@
 
 ## 接入步骤
 
-1. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图，在 `InputModes` 中为需要按住的输入 Tag 配置 `HoldRelease`。组件在 `BeginPlay` 时初始化解析器。
+1. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图，在 `InputModes` 中为需要按住的输入 Tag 配置 `HoldRelease` 或 `HoldIfAvailable`。组件在 `BeginPlay` 时初始化解析器。
 2. 让角色实现 `ICadenceArcInputContextProvider::CollectInputContext`，返回按键时的方向等事件上下文。不需要事件上下文时可以跳过这一步。
 3. 在输入绑定中调用 `PressInput(Tag)`、`ReleaseInput(Tag)` 和 `CancelInput(Tag)`。
 4. 执行器订阅 `OnActionRequested`。收到请求后，能执行时调用 `NotifyActionStarted`，否则调用 `NotifyActionRejected`。
@@ -63,12 +63,15 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 | 输入方式 | 按下时 | 松开时 |
 | --- | --- | --- |
 | `PressOnly` | 立即提交输入 | 只结束按键配对 |
-| `HoldRelease`，当前节点有该 Tag 的 `Released` 转移 | 申请按住资格 | 按按住时长解析 |
-| `HoldRelease`，当前节点没有该 Tag 的 `Released` 转移 | 与 `PressOnly` 相同，立即提交 | 只结束按键配对 |
+| `HoldRelease` | 申请按住资格；当前节点没有该 Tag 的 `Released` 转移时，申请被拒绝（`NoMatchingTransition`） | 按按住时长解析 |
+| `HoldIfAvailable` | 当前节点有该 Tag 的 `Released` 转移时与 `HoldRelease` 相同，否则与 `PressOnly` 相同 | 与按下时采用的方式一致 |
 
-第三行保证同一个按键在没有蓄力分支的动作中仍然按下即响应。例如 Heavy 配置为 `HoldRelease` 时，在有蓄力档位的节点上等待松开，在只有普通转移的节点上按下立即出招。
+`HoldIfAvailable` 适合“同一个按键在部分动作中可以蓄力”的设计。例如 Heavy 配置为 `HoldIfAvailable` 时，在有蓄力档位的节点上等待松开，在只有普通转移的节点上按下立即出招。使用时需要注意以下两点：
 
-同一节点上，同一个 `HoldRelease` 输入同时配置了 `Pressed` 和 `Released` 转移时，按住优先，`Pressed` 转移不会被选中。
+- 判断只看当前节点是否存在该 Tag 的 `Released` 转移。删除节点上最后一条 `Released` 转移，会让这个键在该节点从松开触发变为按下触发。
+- 同一节点同时有该 Tag 的 `Pressed` 和 `Released` 转移时，总是等待松开；即使所有 `Released` 转移的条件最终都不满足，也不会改走 `Pressed` 转移。按下时还不知道松开时的上下文和按住时长，无法预先评估 `Released` 转移的条件。
+
+需要某个键在所有节点上都等待松开时，使用 `HoldRelease`；节点缺少 `Released` 转移属于配置错误时，`HoldRelease` 会通过输入处理结果报告拒绝原因。
 
 ## 事件上下文
 
@@ -114,7 +117,7 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 
 ## 执行器约定
 
-- **一个组件只能有一个执行器。** 执行器订阅 `OnActionRequested`，负责确认并执行请求。UI、音效等系统不应订阅这个事件来执行动作；多个订阅者都执行时，同一个请求会播放两次，解析器会以握手结果拒绝第二次确认。
+- **一个组件只能有一个执行器。** 执行器订阅 `OnActionRequested`，负责确认并执行请求。UI、音效等系统不应订阅这个事件来执行动作；多个订阅者都执行时，同一个请求会播放两次，解析器会以握手结果拒绝第二次确认。组件发出请求时如果没有任何订阅者，会输出一条警告，因为此时请求会一直停在 `AwaitingStart`。
 - **取消输入不等于打断动作。** `CancelInput` 和 `CancelAllInputs` 只清理按键配对和按住资格，不会停止正在执行的动作。失去控制或窗口失焦时是否停止动作，由游戏决定；需要停止时，由执行器调用 `NotifyActionInterrupted`。
 
 ## 接口
@@ -132,12 +135,13 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 | 执行器 | `NotifyActionStarted` / `NotifyActionRejected` | 确认或拒绝请求 |
 | 执行器 | `OpenBufferWindow` / `CloseBufferWindow` | 开关缓冲窗口 |
 | 执行器 | `NotifyActionCompleted` | 动作完成；下一个请求从 `OnActionRequested` 发出 |
-| 执行器 | `NotifyActionCancelled` / `NotifyActionInterrupted` | 结束动作并回到入口 |
+| 执行器 | `NotifyActionCancelled` / `NotifyActionInterrupted` | 结束动作并回到入口；两者都只接收请求 ID，通过选择接口区分结束方式 |
 | 执行器 | `ResetCombo()` | 在 `Ready` 状态下回到入口动作 |
 | 输出 | `OnActionRequested` | 所有动作请求的统一出口 |
 | 输出 | `OnHoldStageChanged` | 按住资格进入蓄力或蓄满，携带输入 Tag 和阈值时间 |
 | 输出 | `OnHoldEnded` | 按住资格结束，携带输入 Tag 和结束原因 |
-| 查询 | `GetResolver()` | 底层解析器，用于查询状态或调试 |
+| 查询 | `IsInitialized()` / `GetState()` / `GetCurrentActionTag()` | 常用状态，供 UI 等系统直接读取 |
+| 查询 | `GetResolver()` | 底层解析器，用于调试和高级查询；通过它直接修改解析器会绕过组件的通知 |
 
 三个输出事件都有对应的 C++ 多播委托（`OnActionRequestedNative`、`OnHoldStageChangedNative` 和 `OnHoldEndedNative`），与蓝图委托同时发出，便于 C++ 代码绑定 lambda。
 

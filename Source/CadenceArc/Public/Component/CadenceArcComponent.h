@@ -92,7 +92,7 @@ public:
 	TObjectPtr<UCadenceArcGraph> Graph;
 
 	// 每个输入 Tag 的输入方式；没有配置的 Tag 按 PressOnly 处理。
-	// HoldRelease 的键在当前节点没有该 Tag 的 Released 转移时，按下立即提交，不等待松开。
+	// HoldRelease 始终申请按住资格；HoldIfAvailable 只在当前节点有该 Tag 的 Released 转移时申请，否则按下立即提交。
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc", meta=(ForceInlineRow))
 	TMap<FGameplayTag, ECadenceArcInputMode> InputModes;
 
@@ -209,6 +209,20 @@ public:
 	// 新的时间来源必须与已经提交的时间戳处于同一时间域，并且不递减。
 	void SetTimeSource(TFunction<double()> InTimeSource);
 
+	// ---- 状态查询 ----
+
+	UFUNCTION(BlueprintPure, Category="CadenceArc")
+	bool IsInitialized() const;
+
+	// 解析器状态：Ready、AwaitingStart（等待执行器确认）、Executing；未初始化时为 Uninitialized
+	UFUNCTION(BlueprintPure, Category="CadenceArc")
+	ECadenceArcResolverState GetState() const;
+
+	// 已提交的当前动作；未初始化时为空
+	UFUNCTION(BlueprintPure, Category="CadenceArc")
+	FGameplayTag GetCurrentActionTag() const;
+
+	// 底层解析器，用于调试或高级查询。通过它直接修改解析器会绕过组件，组件不会发出 OnHoldEnded。
 	UFUNCTION(BlueprintPure, Category="CadenceArc")
 	UCadenceArcResolver* GetResolver() const { return Resolver; }
 
