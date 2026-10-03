@@ -34,6 +34,14 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 | `Input/CadenceArcInputTrackerTests.cpp` | 按下和松开的配对、时长、Token |
 | `Component/CadenceArcComponentTests.cpp` | CadenceArc 组件：按键配对、输入方式配置和无松手转移时的按下回退、上下文提供者、输入处理结果、按住结束通知、按住资格的提交和取消、逐帧推进与自动释放、统一请求出口、初始化前的持久上下文、注入的时间来源 |
 
+## Enhanced Input 适配测试
+
+在 `Source/CadenceArcEnhancedInput/Private/Tests/` 下：
+
+| 文件 | 覆盖 |
+| --- | --- |
+| `CadenceArcInputBinderTests.cpp` | 触发事件到组件调用的映射、输入方式写入、无效和重复条目、重复绑定和解除绑定时取消按下中的输入、只取消已绑定的输入 |
+
 ## 编辑器模块测试
 
 在 `Source/CadenceArcEditor/Private/Tests/` 下：

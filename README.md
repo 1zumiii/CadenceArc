@@ -24,6 +24,7 @@ CadenceArc 只决定下一个动作是什么。动作的播放、伤害结算和
 
 - **动作图**：以 `UDataAsset` 配置，用 Gameplay Tag 标识动作和输入，编辑器内自动校验。
 - **标准接入组件**：`UCadenceArcComponent` 自动处理时间戳、逐帧推进、按键配对、输入方式和请求出口，并提供输入处理结果和按住结束通知。开发者只需配置一次输入方式和上下文来源，并实现执行器回调。
+- **Enhanced Input 适配**：可选模块 `CadenceArcEnhancedInput`。在数据资产中配置 Input Action 对应的输入 Tag 和输入方式，组件负责绑定和转发，并在失去控制时取消按住中的输入。
 - **两阶段握手**：执行器确认开始后，解析器才提交目标节点。执行器拒绝请求后，解析器清空候选请求，回到 `Ready`，保留原来的动作节点。
 - **输入缓冲**：缓冲窗口由执行器开关。缓冲区只有一格，新输入覆盖旧输入，可以设置过期时间。
 - **按住与蓄力**：同一按键可以根据按住时长触发不同动作，支持蓄力阶段、蓄力保护和自动释放。
@@ -37,7 +38,7 @@ CadenceArc 只决定下一个动作是什么。动作的播放、伤害结算和
 2. 在模块的 `Build.cs` 中添加依赖 `"CadenceArc"` 和 `"GameplayTags"`。
 3. 新建 `CadenceArcGraph` 数据资产，配置入口节点、节点和转移。
 4. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图，在 `InputModes` 中为需要按住的输入配置 `HoldRelease`，只在部分动作中蓄力的输入配置 `HoldIfAvailable`。组件负责时间戳、逐帧推进、按键配对和请求出口。需要方向等事件上下文时，让角色实现 `ICadenceArcInputContextProvider`。
-5. 在输入绑定中调用组件的 `PressInput` 和 `ReleaseInput`，执行器订阅 `OnActionRequested` 并回调动作的生命周期：
+5. 使用 Enhanced Input 时，添加 `UCadenceArcInputBinderComponent` 并调用 `BindInputActions`，详见[Enhanced Input 适配](Docs/EnhancedInput.md)；使用其他输入系统时，在输入绑定中调用组件的 `PressInput` 和 `ReleaseInput`。执行器订阅 `OnActionRequested` 并回调动作的生命周期：
 
 ```cpp
 // 输入绑定：输入方式来自 InputModes，事件上下文来自角色的 CollectInputContext
@@ -59,13 +60,14 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 
 组件的完整接口见[CadenceArc 组件](Docs/Component.md)。测试、回放等需要直接控制时间的场景，可以绕过组件直接使用 `UCadenceArcResolver`。
 
-完整示例见 [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox)。它使用 Enhanced Input 和基于 Timer 的演示执行器驱动 CadenceArc，包含按住输入和转移条件的演示。
+完整示例见 [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox)。它使用 Enhanced Input 适配模块和基于 Timer 的演示执行器驱动 CadenceArc，包含按住输入和转移条件的演示。
 
 ## 文档
 
 | 文档 | 内容 |
 | --- | --- |
 | [CadenceArc 组件](Docs/Component.md) | 标准接入方式：组件的职责、接入步骤、接口和时间来源 |
+| [Enhanced Input 适配](Docs/EnhancedInput.md) | 可选模块：用数据资产把 Input Action 绑定到组件，处理失去输入时的清理和触发器设置 |
 | [解析器：握手、缓冲与时间](Docs/Resolver.md) | 状态与生命周期、执行器接入、结果类型、缓冲窗口、时间与过期、上下文与停顿 |
 | [按住输入](Docs/HoldInput.md) | 松手档位、蓄力配置、逐帧推进、宿主接入注意事项 |
 | [动作图与校验](Docs/Graph.md) | 图的字段、转移条件与优先级、校验规则 |

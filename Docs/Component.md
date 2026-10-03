@@ -29,7 +29,7 @@
 
 1. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图，在 `InputModes` 中为需要按住的输入 Tag 配置 `HoldRelease` 或 `HoldIfAvailable`。组件在 `BeginPlay` 时初始化解析器。
 2. 让角色实现 `ICadenceArcInputContextProvider::CollectInputContext`，返回按键时的方向等事件上下文。不需要事件上下文时可以跳过这一步。
-3. 在输入绑定中调用 `PressInput(Tag)`、`ReleaseInput(Tag)` 和 `CancelInput(Tag)`。
+3. 在输入绑定中调用 `PressInput(Tag)`、`ReleaseInput(Tag)` 和 `CancelInput(Tag)`。使用 Enhanced Input 时，可以改用 [Enhanced Input 适配](EnhancedInput.md)，它负责这三个调用，并在数据资产中配置输入方式。
 4. 执行器订阅 `OnActionRequested`。收到请求后，能执行时调用 `NotifyActionStarted`，否则调用 `NotifyActionRejected`。
 5. 执行器在动作的对应时刻调用 `OpenBufferWindow`、`CloseBufferWindow` 和 `NotifyActionCompleted`；受击或取消时调用 `NotifyActionInterrupted` 或 `NotifyActionCancelled`。
 6. 表现层按需订阅 `OnHoldStageChanged` 和 `OnHoldEnded`，播放和清理蓄力表现。

@@ -21,9 +21,20 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "CadenceArcEnhancedInput",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "CadenceArcEditor",
 			"Type": "Editor",
 			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "EnhancedInput",
+			"Enabled": true
 		}
 	]
 }

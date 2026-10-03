@@ -24,6 +24,7 @@ CadenceArc only decides which move comes next. How an action plays, deals damage
 
 - **Action graphs**: a `UDataAsset` keyed by Gameplay Tags, validated in the editor.
 - **Standard integration component**: `UCadenceArcComponent` handles timestamps, per-frame advance, press/release pairing, input modes, and a single request outlet, and reports input results and hold endings. You configure input modes and the context source once and implement the executor callbacks.
+- **Enhanced Input adapter**: the optional `CadenceArcEnhancedInput` module. Map Input Actions to input tags and input modes in a data asset; a component binds and forwards them, and cancels held inputs when the pawn loses control.
 - **Two-phase handshake**: a resolved request commits only when the executor confirms it started; a rejection leaves state unchanged.
 - **Input buffering**: an executor-controlled window with a single slot (last input wins) and optional expiry.
 - **Hold and charge**: different moves for different hold durations, with charge stages, charge protection, and automatic release.
@@ -37,7 +38,7 @@ CadenceArc only decides which move comes next. How an action plays, deals damage
 2. Add `"CadenceArc"` and `"GameplayTags"` to your module's `Build.cs` dependencies.
 3. Create a `CadenceArcGraph` data asset with an entry node, nodes, and transitions.
 4. Add a `UCadenceArcComponent` to your character, assign the graph to its `Graph` property, and set `HoldRelease` in `InputModes` for inputs that always wait for release, or `HoldIfAvailable` for inputs that only charge in some actions. The component handles timestamps, per-frame advance, press/release pairing, and the request outlet. If you need event context such as direction, implement `ICadenceArcInputContextProvider` on the character.
-5. Call `PressInput` and `ReleaseInput` from your input bindings. Your executor subscribes to `OnActionRequested` and reports the action lifecycle back:
+5. With Enhanced Input, add a `UCadenceArcInputBinderComponent` and call `BindInputActions` (see [Enhanced Input adapter](Docs/EnhancedInput.md)). With another input system, call `PressInput` and `ReleaseInput` from your input bindings. Your executor subscribes to `OnActionRequested` and reports the action lifecycle back:
 
 ```cpp
 // Input binding: the mode comes from InputModes, event context from the character's CollectInputContext
@@ -59,7 +60,7 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 
 See [CadenceArc component](Docs/Component.md) for the full interface. Tests, replays, and other cases that need direct control over time can use `UCadenceArcResolver` without the component.
 
-A complete, playable example lives in [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox): it drives CadenceArc with Enhanced Input and a Timer-based demo executor, including hold input and transition conditions.
+A complete, playable example lives in [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox): it drives CadenceArc through the Enhanced Input adapter and a Timer-based demo executor, including hold input and transition conditions.
 
 ## Documentation
 
@@ -68,6 +69,7 @@ The detailed docs are written in Chinese.
 | Document | Covers |
 | --- | --- |
 | [CadenceArc component](Docs/Component.md) | The standard integration: what the component handles, setup, interface, time source |
+| [Enhanced Input adapter](Docs/EnhancedInput.md) | Optional module: bind Input Actions to the component from a data asset, cleanup on lost input, trigger setup |
 | [Resolver: handshake, buffering, and time](Docs/Resolver.md) | States and lifecycle, executor integration, result types, buffer windows, time and expiry, context and pause |
 | [Hold input](Docs/HoldInput.md) | Release tiers, charge configuration, per-frame advance, host integration notes |
 | [Action graph and validation](Docs/Graph.md) | Graph fields, transition conditions and priorities, validation rules |

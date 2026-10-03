@@ -64,3 +64,9 @@
 - Sandbox 的动作图从 `UCadenceArcDemoExecutorComponent::ComboGraph` 移到了角色上 CadenceArc 组件的 `Graph` 属性。
 - `UCadenceArcComponent` 的输入接口改为 `PressInput(Tag)` 和 `ReleaseInput(Tag)`：输入方式从 `InputModes` 读取，事件上下文从 `ICadenceArcInputContextProvider` 采集。需要直接传入上下文时，使用 `PressInputWithContext` 和 `ReleaseInputWithContext`。两个输入接口改为返回 `FCadenceArcInputResult`。
 - `ECadenceArcInputMode` 追加了 `HoldIfAvailable`。组件中的 `HoldRelease` 恢复为严格语义：当前节点没有 `Released` 转移时拒绝申请。需要“有蓄力分支时等待松开、否则按下提交”的输入，请改用 `HoldIfAvailable`。
+
+## Enhanced Input 适配模块（0.4.0 之后）
+
+- 插件新增可选的运行时模块 `CadenceArcEnhancedInput`，并在插件描述文件中声明依赖 Enhanced Input 插件。核心模块 `CadenceArc` 的依赖不变。详见[Enhanced Input 适配](EnhancedInput.md)。
+- CadenceArcSandbox 删除了 `CadenceArcInputBinding.h` 中的 `BindComboInputActions` 模板，以及角色上的三个转发函数，改用 `UCadenceArcInputBinderComponent`。参照 Sandbox 复制过这段代码的项目，可以改用适配组件。
+- Sandbox 的 `UCadenceArcInputConfig` 改为继承 `UCadenceArcInputActionSet`。原来的 `ComboInputActions` 字段并入 `InputActions`，`FCadenceArcInputActionConfig` 改为插件中的 `FCadenceArcInputActionBinding`，字段名不变。`Config/DefaultEngine.ini` 中的 `CoreRedirects` 负责读取旧资产，Sandbox 中的两个输入配置资产已经按新类型重新保存。
