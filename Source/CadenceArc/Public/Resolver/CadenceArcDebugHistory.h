@@ -59,6 +59,12 @@ struct FCadenceArcDebugEvent
 	ECadenceArcInputReleaseSource ReleaseSource = ECadenceArcInputReleaseSource::None;
 	ECadenceArcHoldStage StageReached = ECadenceArcHoldStage::None; // 本次跨过的最后一个蓄力阶段
 
+	// ---- 选边时实际用到的条件（Phase 8）：只有这次调用真的按图选了边才填 ----
+	bool bHasResolutionContext = false;
+	FGameplayTagContainer ContextTags; // 持久上下文与事件上下文的并集
+	bool bHasPauseDuration = false; // 没有停顿起点（还没有完成过动作）时为 false
+	double PauseDurationSeconds = 0.0; // 缓冲的输入和缓冲的松手按 0
+
 	// ---- 调用前后 ----
 	ECadenceArcResolverState StateBefore = ECadenceArcResolverState::Uninitialized;
 	ECadenceArcResolverState StateAfter = ECadenceArcResolverState::Uninitialized;

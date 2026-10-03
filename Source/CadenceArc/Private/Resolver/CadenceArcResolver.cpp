@@ -35,6 +35,21 @@ FGameplayTagContainer UCadenceArcResolver::MakeResolutionContext(const FCadenceA
 	return MergedTags;
 }
 
+CadenceArc::GraphQuery::FTransitionMatch UCadenceArcResolver::MatchTransition(
+	const FGameplayTag& SourceActionTag, const FCadenceArcInputEvent& Event, const double PauseDurationSeconds,
+	const TArray<FCadenceArcTransition>* EdgesOverride)
+{
+	const FGameplayTagContainer Context = MakeResolutionContext(Event);
+#if WITH_EDITOR
+	bDebugHasResolution = true;
+	DebugResolutionContext = Context;
+	DebugResolutionPause = PauseDurationSeconds;
+	DebugResolutionEvent = Event;
+#endif
+	return CadenceArc::GraphQuery::FindUniqueTransition(
+		*Graph, SourceActionTag, Event, Context, PauseDurationSeconds, EdgesOverride);
+}
+
 double UCadenceArcResolver::GetPauseDurationSeconds(const FCadenceArcInputEvent& Event) const
 {
 	return LastCompletionTimestampSeconds >= 0.0
@@ -127,9 +142,7 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::SubmitInputImpl(const FCadenceArcI
 	{
 	case ECadenceArcResolverState::Ready:
 		{
-			const auto Match = CadenceArc::GraphQuery::FindUniqueTransition(
-				*Graph, CurrentActionTag, InInputEvent, MakeResolutionContext(InInputEvent),
-				GetPauseDurationSeconds(InInputEvent));
+			const auto Match = MatchTransition(CurrentActionTag, InInputEvent, GetPauseDurationSeconds(InInputEvent));
 			if (Match.Reason == ECadenceArcResolutionReason::None)
 			{
 				// 只有真正被接受的输入才替换槽：解析失败时 Holding 资格原样保留
@@ -510,9 +523,7 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompletedImp
 		Outcome.SetBufferConsumption(ECadenceArcResolutionCategory::NoAction, ECadenceArcResolutionReason::Expired);
 		return Outcome;
 	}
-	const auto Match = CadenceArc::GraphQuery::FindUniqueTransition(
-		*Graph, CurrentActionTag, SlotCopy.InputEvent, MakeResolutionContext(SlotCopy.InputEvent),
-		0.0);
+	const auto Match = MatchTransition(CurrentActionTag, SlotCopy.InputEvent, 0.0);
 	FCadenceArcActionRequest NewRequest; // 非 None 时保持空请求
 	if (Match.Reason == ECadenceArcResolutionReason::None)
 	{
@@ -701,9 +712,8 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::ConsumeHoldRelease(
 			? FMath::Max(0.0, GetPauseDurationSeconds(HoldSlot.InputEvent)) : -1.0);
 
 	// 用授予时冻结的边副本匹配：等待期间改资产不会改变本次轻重攻击的解释
-	const auto Match = CadenceArc::GraphQuery::FindUniqueTransition(
-		*Graph, HoldSlot.SourceActionTag, ReleasedEvent, MakeResolutionContext(ReleasedEvent),
-		PauseDurationSeconds, &HoldSlot.ReleasedEdges);
+	const auto Match = MatchTransition(HoldSlot.SourceActionTag, ReleasedEvent, PauseDurationSeconds,
+	                                   &HoldSlot.ReleasedEdges);
 	if (Match.Reason == ECadenceArcResolutionReason::None)
 	{
 		Outcome.SetRequestProduced(CommitRequest(ReleasedEvent.InputTag, Match.TargetActionTag));

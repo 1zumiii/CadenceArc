@@ -95,6 +95,26 @@ void UCadenceArcResolver::EndDebugRecord(FCadenceArcDebugEvent& Record)
 	}
 	Record.StateAfter = State;
 	Record.CommittedAfter = CurrentActionTag;
+	if (bDebugHasResolution)
+	{
+		Record.bHasResolutionContext = true;
+		Record.ContextTags = DebugResolutionContext;
+		Record.bHasPauseDuration = DebugResolutionPause >= 0.0;
+		Record.PauseDurationSeconds = FMath::Max(DebugResolutionPause, 0.0);
+		if (!Record.InputTag.IsValid())
+		{
+			// 完成时消费缓冲：调用本身不带输入，记下被解析的那个输入
+			Record.InputTag = DebugResolutionEvent.InputTag;
+			Record.InputPhase = DebugResolutionEvent.InputPhase;
+			if (DebugResolutionEvent.InputPhase == ECadenceArcInputPhase::Released)
+			{
+				Record.bHasHeldDuration = true;
+				Record.HeldDurationSeconds = DebugResolutionEvent.HeldDurationSeconds;
+			}
+		}
+		bDebugHasResolution = false; // 只属于这一次公开调用
+		DebugResolutionContext.Reset();
+	}
 	DebugHistory.Add(MoveTemp(Record));
 }
 #endif

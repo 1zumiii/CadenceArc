@@ -800,6 +800,75 @@ namespace CadenceArc::Editor::Tests
 		}
 		return !HasAnyErrors();
 	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcDebugViewPreparatoryConditionTest,
+		"CadenceArc.Editor.DebugView.PreparatoryFollowsConditions",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcDebugViewPreparatoryConditionTest::RunTest(const FString& Parameters)
+	{
+		// 在无蓄力夹具的 Root 上再加两条 Heavy R [0.5, 无上限)：需要 Air、优先级 1 → Heavy01；
+		// 带停顿区间、优先级 2 → Light01。停顿边要等松手事件才知道，预览一律跳过它。
+		FViewFixture Fixture;
+		if (!MakePreparatoryFixture(*this, false, Fixture))
+		{
+			return false;
+		}
+		FCadenceArcNode& Root = Fixture.Graph->Nodes[0];
+		FCadenceArcTransition AirTier = Root.Transitions[1];
+		AirTier.TargetActionTag = View_Heavy01();
+		AirTier.Priority = 1;
+		AirTier.RequiredContextTags.AddTag(DebugViewTag(TEXT("CadenceArc.Automation.Context.Air")));
+		FCadenceArcTransition PauseTier = Root.Transitions[1];
+		PauseTier.TargetActionTag = View_Light01();
+		PauseTier.Priority = 2;
+		PauseTier.bUsePauseRange = true;
+		Root.Transitions.Add(AirTier);
+		Root.Transitions.Add(PauseTier);
+
+		UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+		const FCadenceArcGraphLayout Layout = BuildGraphLayout(*Fixture.Graph);
+		if (!TestTrue(TEXT("Conditional fixture initializes"),
+		              Resolver->Initialize(Fixture.Graph) == ECadenceArcResolverInitResult::Success)
+			|| !BeginViewHold(*this, Resolver, 1.0) || !AdvanceViewTime(*this, Resolver, 1.6))
+		{
+			return false;
+		}
+		const auto FindEdge = [&Layout](const FGameplayTag& Target, const int32 Priority)
+		{
+			return Layout.Edges.IndexOfByPredicate([&](const FCadenceArcLayoutEdge& Edge)
+			{
+				return Edge.Transition.InputPhase == ECadenceArcInputPhase::Released
+					&& Edge.Transition.TargetActionTag == Target && Edge.Transition.Priority == Priority;
+			});
+		};
+		const auto FindNode = [&Layout](const FGameplayTag& Tag)
+		{
+			return Layout.Nodes.IndexOfByPredicate([&](const FCadenceArcLayoutNode& Node) { return Node.ActionTag == Tag; });
+		};
+		const int32 PlainTier = FindEdge(View_Light02(), 0);
+		const int32 AirEdge = FindEdge(View_Heavy01(), 1);
+		const int32 PauseEdge = FindEdge(View_Light01(), 2);
+		if (!TestTrue(TEXT("Conditional edges are laid out"),
+		              PlainTier != INDEX_NONE && AirEdge != INDEX_NONE && PauseEdge != INDEX_NONE))
+		{
+			return false;
+		}
+
+		// 没有 Air：Air 档位不满足，停顿档位不参与，落在普通档位
+		FCadenceArcDebugView View = BuildReadOnly(*this, TEXT("No context"), *Resolver, Layout);
+		TestEqual(TEXT("No context picks the plain tier"), View.CurrentReleaseEdgeIndex, PlainTier);
+		TestEqual(TEXT("No context target"), View.CurrentReleaseTargetNodeIndex, FindNode(View_Light02()));
+		TestEqual(TEXT("Conditional tiers still show progress"), View.PreparatoryEdgeProgress[AirEdge], 1.f);
+
+		// 持久上下文里有 Air.Jump（子 Tag）：优先级更高的 Air 档位胜出，停顿档位仍被跳过
+		Resolver->SetContextTags(FGameplayTagContainer(DebugViewTag(TEXT("CadenceArc.Automation.Context.Air.Jump"))));
+		View = BuildReadOnly(*this, TEXT("Air"), *Resolver, Layout);
+		TestEqual(TEXT("Air context picks the Air tier"), View.CurrentReleaseEdgeIndex, AirEdge);
+		TestEqual(TEXT("Air context target"), View.CurrentReleaseTargetNodeIndex, FindNode(View_Heavy01()));
+		return !HasAnyErrors();
+	}
 }
 
 #endif

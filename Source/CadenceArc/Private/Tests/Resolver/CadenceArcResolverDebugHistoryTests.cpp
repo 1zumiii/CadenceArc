@@ -342,6 +342,66 @@ namespace CadenceArc::Tests
 		TestEqual(TEXT("Incremental read"), Tail.Num(), 3);
 		return !HasAnyErrors();
 	}
+
+	// Phase 8：真正按图选了边的调用，记录当时合并后的上下文和停顿；没选边的调用不带
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcDebugHistoryResolutionContextTest,
+		"CadenceArc.Resolver.DebugHistory.RecordsResolutionContext",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcDebugHistoryResolutionContextTest::RunTest(const FString& Parameters)
+	{
+		// Root --Light--> Light01；Light01：Heavy 且前 → Finisher01（优先级 1），Heavy → Heavy01
+		UCadenceArcGraph* Graph = NewObject<UCadenceArcGraph>();
+		Graph->EntryActionTag = Action_Root;
+		Graph->Nodes.Reserve(4);
+		AddTransition(AddNode(Graph, Action_Root), Input_Light, Action_Light01);
+		FCadenceArcNode& Light01 = AddNode(Graph, Action_Light01);
+		AddTransition(Light01, Input_Heavy, Action_Finisher01);
+		Light01.Transitions.Last().Priority = 1;
+		Light01.Transitions.Last().RequiredContextTags.AddTag(Context_Forward);
+		AddTransition(Light01, Input_Heavy, Action_Heavy01);
+		AddNode(Graph, Action_Finisher01);
+		AddNode(Graph, Action_Heavy01);
+
+		UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+		Resolver->Initialize(Graph);
+		Resolver->SetContextTags(FGameplayTagContainer(Context_Air));
+		const FCadenceArcActionRequest First = Resolver->SubmitInput(MakeInput(Input_Light, 0.5)).GetActionRequest();
+		Resolver->NotifyActionStarted(First.RequestId);
+		Resolver->OpenBufferWindow(First.RequestId);
+		FCadenceArcInputEvent Heavy = MakeInput(Input_Heavy, 0.8);
+		Heavy.ContextTags.AddTag(Context_Forward);
+		Resolver->SubmitInput(Heavy); // 执行中：只进缓冲，不选边
+		const FCadenceArcActionCompletionOutcome Completion = CompleteAt(*this, Resolver, First.RequestId, 1.0);
+		TestTag(*this, TEXT("Buffered Heavy with Forward resolves to the forward edge"),
+		        Completion.GetNextActionRequest().TargetActionTag, Action_Finisher01);
+
+		const TArray<FCadenceArcDebugEvent> Events = ReadHistory(Resolver);
+		if (!ExpectOperations(*this, TEXT("Context flow"), Events, {
+			                      ECadenceArcDebugOperation::Initialize, ECadenceArcDebugOperation::SubmitInput,
+			                      ECadenceArcDebugOperation::ActionStarted, ECadenceArcDebugOperation::OpenWindow,
+			                      ECadenceArcDebugOperation::SubmitInput, ECadenceArcDebugOperation::ActionCompleted
+		                      }))
+		{
+			return false;
+		}
+		const FCadenceArcDebugEvent& Submit = Events[1];
+		TestTrue(TEXT("Ready submit records its resolution"), Submit.bHasResolutionContext);
+		TestTrue(TEXT("Persistent context is recorded"), Submit.ContextTags.HasTagExact(Context_Air));
+		TestFalse(TEXT("Before any completion there is no pause"), Submit.bHasPauseDuration);
+		TestFalse(TEXT("Started does not resolve"), Events[2].bHasResolutionContext);
+		TestFalse(TEXT("Buffering does not resolve"), Events[4].bHasResolutionContext);
+
+		const FCadenceArcDebugEvent& Completed = Events[5];
+		TestTrue(TEXT("Completion records the buffered resolution"), Completed.bHasResolutionContext);
+		TestTrue(TEXT("Merged context has both sources"), Completed.ContextTags.HasTagExact(Context_Air)
+		         && Completed.ContextTags.HasTagExact(Context_Forward));
+		TestTrue(TEXT("Buffered input pauses for 0 seconds"),
+		         Completed.bHasPauseDuration && Completed.PauseDurationSeconds == 0.0);
+		TestTag(*this, TEXT("Completion record names the buffered input"), Completed.InputTag, Input_Heavy);
+		return !HasAnyErrors();
+	}
 }
 
 #endif

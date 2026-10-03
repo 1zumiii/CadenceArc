@@ -10,6 +10,11 @@
 
 class UCadenceArcGraph;
 
+namespace CadenceArc::GraphQuery
+{
+	struct FTransitionMatch;
+}
+
 DECLARE_LOG_CATEGORY_EXTERN(LogCadenceArc, Log, All);
 
 /**
@@ -63,6 +68,11 @@ private:
 	double LastCompletionTimestampSeconds = -1.0;
 
 	FGameplayTagContainer MakeResolutionContext(const FCadenceArcInputEvent& Event) const;
+	// 所有按图选边都走这里：合并上下文后调用 GraphQuery::FindUniqueTransition。
+	// 编辑器构建中顺便记下这次用到的上下文和停顿，供本次公开调用的调试记录使用。
+	CadenceArc::GraphQuery::FTransitionMatch MatchTransition(
+		const FGameplayTag& SourceActionTag, const FCadenceArcInputEvent& Event, double PauseDurationSeconds,
+		const TArray<FCadenceArcTransition>* EdgesOverride = nullptr);
 	double GetPauseDurationSeconds(const FCadenceArcInputEvent& Event) const;
 	void RecordCompletionTimestamp(double CompletionTimestampSeconds);
 
@@ -160,6 +170,11 @@ private:
 	// 调试历史只在编辑器构建中存在；不是 UPROPERTY，只保存值，不参与序列化和 GC
 	FCadenceArcDebugHistory DebugHistory;
 	double DebugLastHostTime = -1.0; // 最近一次调用方传入的有效时间，供不带时间的记录使用；负数表示还没有
+	// 本次公开调用里最近一次选边用到的上下文和停顿；EndDebugRecord 写进记录后清空
+	bool bDebugHasResolution = false;
+	FGameplayTagContainer DebugResolutionContext;
+	double DebugResolutionPause = -1.0;
+	FCadenceArcInputEvent DebugResolutionEvent; // 完成时消费缓冲的那次调用没有输入参数，靠它补上输入
 	FCadenceArcDebugEvent BeginDebugRecord(ECadenceArcDebugOperation Operation) const;
 	void EndDebugRecord(FCadenceArcDebugEvent& Record);
 	void NoteDebugHostTime(double Seconds);

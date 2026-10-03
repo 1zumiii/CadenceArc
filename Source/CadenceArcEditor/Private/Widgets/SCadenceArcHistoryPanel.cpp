@@ -126,7 +126,7 @@ EActiveTimerReturnType SCadenceArcHistoryPanel::OnRefreshTick(double CurrentTime
 	{
 		const TSharedPtr<FRow> Row = MakeShared<FRow>();
 		Row->Sequence = Event.Sequence;
-		Row->Text = FormatDebugEvent(Event);
+		Row->Text = FormatDebugEvent(Event, Resolver->GetGraph());
 		Row->Focus = MakeHistoryFocus(Event);
 		if (Row->Text.Time.IsEmpty() && World)
 		{

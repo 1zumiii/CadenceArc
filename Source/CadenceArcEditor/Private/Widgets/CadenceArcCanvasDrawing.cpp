@@ -4,6 +4,7 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Rendering/DrawElements.h"
 #include "Rendering/SlateRenderer.h"
+#include "ViewModel/CadenceArcConditionText.h"
 
 namespace CadenceArc::Editor::CanvasDrawing
 {
@@ -63,17 +64,23 @@ namespace CadenceArc::Editor::CanvasDrawing
 	{
 		const FString Input = ShortTagName(Transition.InputTag);
 		const TCHAR* Phase = Transition.InputPhase == ECadenceArcInputPhase::Pressed ? TEXT("P") : TEXT("R");
-		if (Transition.InputPhase != ECadenceArcInputPhase::Released || !Transition.bUseDurationRange)
+		FString Label = FString::Printf(TEXT("%s %s"), *Input, Phase);
+		if (Transition.InputPhase == ECadenceArcInputPhase::Released && Transition.bUseDurationRange)
 		{
-			return FString::Printf(TEXT("%s %s"), *Input, Phase);
+			const FCadenceArcHeldDurationRange& Range = Transition.DurationRange;
+			// 上限不包含在区间内，所以右边是圆括号
+			const FString Upper = Range.bHasMaxHeldDuration
+				? FString::SanitizeFloat(Range.MaxHeldDurationSecondsExclusive)
+				: FString(TEXT("∞"));
+			Label += FString::Printf(TEXT(" [%s, %s)"), *FString::SanitizeFloat(Range.MinHeldDurationSeconds), *Upper);
 		}
-		const FCadenceArcHeldDurationRange& Range = Transition.DurationRange;
-		// 上限不包含在区间内，所以右边是圆括号
-		const FString Upper = Range.bHasMaxHeldDuration
-			? FString::SanitizeFloat(Range.MaxHeldDurationSecondsExclusive)
-			: FString(TEXT("∞"));
-		return FString::Printf(TEXT("%s %s [%s, %s)"), *Input, Phase,
-		                       *FString::SanitizeFloat(Range.MinHeldDurationSeconds), *Upper);
+		// 转移条件和优先级（Phase 8）："Heavy P +Forward pause≥0.3s #2"
+		const FString Conditions = CadenceArc::Editor::ConditionText::FormatConditions(Transition);
+		if (!Conditions.IsEmpty())
+		{
+			Label += TEXT(" ") + Conditions;
+		}
+		return Label;
 	}
 
 	FVector2f ToFloatPoint(const FVector2D& Point)

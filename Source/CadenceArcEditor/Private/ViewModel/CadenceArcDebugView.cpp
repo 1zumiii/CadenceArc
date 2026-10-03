@@ -129,7 +129,11 @@ FCadenceArcDebugView BuildDebugView(const UCadenceArcResolver& InResolver, const
 		ReleaseEvent.TimestampSeconds = Hold.LastObservedTimestampSeconds;
 		ReleaseEvent.HeldDurationSeconds = Held;
 
-		bool bMultipleMatches = false;
+		// “此刻松手会选中的档位”：时长对得上、条件按当前持久上下文满足的边里，取优先级最高的那条，打平就不标。
+		// 松手时事件自带的上下文（例如方向）现在还不知道，停顿起点也不对外公开，所以带停顿区间的档位不参与预览。
+		const FGameplayTagContainer Context = InResolver.GetContextTags();
+		int32 BestPriority = TNumericLimits<int32>::Lowest();
+		bool bTie = false;
 		for (int32 EdgeIndex = 0; EdgeIndex < InLayout.Edges.Num(); ++EdgeIndex)
 		{
 			const FCadenceArcLayoutEdge& Edge = InLayout.Edges[EdgeIndex];
@@ -140,19 +144,24 @@ FCadenceArcDebugView BuildDebugView(const UCadenceArcResolver& InResolver, const
 				continue;
 			}
 			DebugView.PreparatoryEdgeProgress[EdgeIndex] = GetPreparatoryProgress(Edge.Transition, Hold, Held);
-			if (Edge.Transition.Matches(ReleaseEvent))
+			const FCadenceArcTransition& Transition = Edge.Transition;
+			if (!Transition.Matches(ReleaseEvent) || Transition.bUsePauseRange
+				|| !Context.HasAll(Transition.RequiredContextTags) || Context.HasAny(Transition.BlockedContextTags))
 			{
-				if (DebugView.CurrentReleaseEdgeIndex != INDEX_NONE)
-				{
-					bMultipleMatches = true;
-				}
-				else
-				{
-					DebugView.CurrentReleaseEdgeIndex = EdgeIndex;
-				}
+				continue;
+			}
+			if (Transition.Priority > BestPriority)
+			{
+				BestPriority = Transition.Priority;
+				DebugView.CurrentReleaseEdgeIndex = EdgeIndex;
+				bTie = false;
+			}
+			else if (Transition.Priority == BestPriority)
+			{
+				bTie = true;
 			}
 		}
-		if (bMultipleMatches)
+		if (bTie)
 		{
 			DebugView.CurrentReleaseEdgeIndex = INDEX_NONE;
 		}

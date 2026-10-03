@@ -353,8 +353,11 @@ void SCadenceArcGraphCanvas::PaintPorts(const FPaintContext& Paint) const
 		const FCadenceArcLayoutNode& Source = Layout.Nodes[Edge.SourceNodeIndex];
 		const FVector2D RowTopLeft = Source.Position
 			+ FVector2D(10.f, Params.HeaderHeight + Edge.PortSlot * Params.PortHeight + 1.f);
+		// 带条件的标签可能比端口行长：按字宽截断，完整文字在悬停提示里
+		const double RowWidth = Source.Size.X - 24.0;
 		DrawLabel(Paint.Out, Paint.TextLayer, Paint.Geometry, RowTopLeft,
-		          FVector2D(Source.Size.X - 24.f, Params.PortHeight), EdgeLabels[EdgeIndex], Paint.PortFont, DisplayColor);
+		          FVector2D(RowWidth, Params.PortHeight), FitText(EdgeLabels[EdgeIndex], Paint.PortFont, RowWidth),
+		          Paint.PortFont, DisplayColor);
 
 		if (!Edge.Path.IsEmpty())
 		{
