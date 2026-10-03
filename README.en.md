@@ -35,12 +35,19 @@ CadenceArc only decides which move comes next. How an action plays, deals damage
 
 ## Quick Start
 
+CadenceArc supports both C++ and Blueprint integration. Both use the same assets and components; they differ only in where the executor lives.
+
+Common steps:
+
 1. Put this repository at `Plugins/CadenceArc` in your project (a Git submodule works) and enable the plugin.
-2. In C++, add `"CadenceArc"` and `"GameplayTags"` to your module's `Build.cs` dependencies, plus `"CadenceArcEnhancedInput"` if you use the Enhanced Input adapter. Blueprint-only projects skip this step; see [Blueprint integration](Docs/Blueprint.md).
-3. Create a `CadenceArcGraph` data asset with an entry node, nodes, and transitions.
-4. Add a `UCadenceArcComponent` to your character and assign the graph to its `Graph` property. The component handles timestamps, per-frame advance, press/release pairing, and the request outlet. If you need event context such as direction, implement `ICadenceArcInputContextProvider` on the character.
-5. With Enhanced Input, create a `CadenceArcInputActionSet` asset that maps each Input Action to an input tag and input mode, then add a `UCadenceArcInputBinderComponent` to the character and assign the asset. It binds automatically once the character is possessed; see [Enhanced Input adapter](Docs/EnhancedInput.md). With another input system, set input modes in the component's `InputModes` and call `PressInput` and `ReleaseInput` from your input bindings. Use `HoldRelease` for inputs that always wait for release, or `HoldIfAvailable` for inputs that only charge in some actions.
-6. Your executor subscribes to `OnActionRequested` and reports the action lifecycle back:
+2. Create a `CadenceArcGraph` data asset with an entry node, nodes, and transitions.
+3. Add a `UCadenceArcComponent` to your character and assign the graph to its `Graph` property. The component handles timestamps, per-frame advance, press/release pairing, and the request outlet. If you need event context such as direction, implement `ICadenceArcInputContextProvider` on the character.
+4. With Enhanced Input, create a `CadenceArcInputActionSet` asset that maps each Input Action to an input tag and input mode, then add a `UCadenceArcInputBinderComponent` to the character and assign the asset. It binds automatically once the character is possessed; see [Enhanced Input adapter](Docs/EnhancedInput.md). Use `HoldRelease` for inputs that always wait for release, or `HoldIfAvailable` for inputs that only charge in some actions.
+5. Implement an executor: subscribe to `OnActionRequested` and report the action lifecycle back.
+
+### C++
+
+Add `"CadenceArc"` and `"GameplayTags"` to your module's `Build.cs` dependencies, plus `"CadenceArcEnhancedInput"` if you use the Enhanced Input adapter. With another input system, set input modes in the component's `InputModes` and call `PressInput` and `ReleaseInput` from your input bindings.
 
 ```cpp
 // Input binding without the adapter: the mode comes from InputModes, event context from the character's CollectInputContext
@@ -62,7 +69,17 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 
 See [CadenceArc component](Docs/Component.md) for the full interface. Tests, replays, and other cases that need direct control over time can use `UCadenceArcResolver` without the component.
 
-A complete, playable example lives in [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox): it drives CadenceArc through the Enhanced Input adapter and a Timer-based demo executor, including hold input and transition conditions.
+### Blueprint
+
+Blueprint-only projects write no C++ and leave `Build.cs` untouched. Add `On Action Requested` from the `CadenceArc` component's Events, then confirm the request, open and close the buffer window, and report completion in the event graph:
+
+![Executor of the Blueprint sample](Docs/Images/blueprint-sample-executor.png)
+
+*The Blueprint sample in the Sandbox: the top row confirms the request and sends a GAS event; the bottom row opens the buffer window, closes it, and completes the action.*
+
+See [Blueprint integration](Docs/Blueprint.md) for the full steps.
+
+A complete, playable example lives in [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox): `L_CadenceArcDemo` uses C++ and a Timer-based demo executor, and `L_CadenceArcBlueprintDemo` uses Blueprint only. Both include hold input and transition conditions.
 
 ## Documentation
 
@@ -82,10 +99,10 @@ The detailed docs are written in Chinese.
 
 ## Status
 
-CadenceArc is `0.4.0-alpha` and experimental; the API and asset format may change before the first stable release.
+CadenceArc is `0.5.0-alpha` and experimental; the API and asset format may change before the first stable release.
 
 - Done: core resolution and handshake, buffering and expiry, hold and charge (Phase 6), runtime debugger (Phase 7), transition conditions and priorities (Phase 8).
-- Done: the standard integration component, the Enhanced Input adapter, and the Blueprint API. The minimal Blueprint setup has not been built and verified in the Sandbox yet.
+- Done: the standard integration component, the Enhanced Input adapter, and the Blueprint API. The Blueprint sample in the Sandbox has been verified in PIE.
 - The hold API has not been used in a shipped game yet, so its ergonomics may still change.
 - The Sandbox uses a Timer-based demo executor; CadenceArc has not yet been tested with an animation montage executor.
 

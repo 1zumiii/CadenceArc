@@ -35,12 +35,19 @@ CadenceArc 只决定下一个动作是什么。动作的播放、伤害结算和
 
 ## 快速开始
 
+CadenceArc 支持 C++ 和蓝图两种接入方式。两种方式使用相同的资产和组件，区别只在执行器写在哪里。
+
+共同的步骤：
+
 1. 将本仓库放到项目的 `Plugins/CadenceArc` 目录（可以作为 Git 子模块），并在编辑器中启用插件。
-2. 使用 C++ 时，在模块的 `Build.cs` 中添加依赖 `"CadenceArc"` 和 `"GameplayTags"`；使用 Enhanced Input 适配时，再添加 `"CadenceArcEnhancedInput"`。只使用蓝图时跳过这一步，见[蓝图接入](Docs/Blueprint.md)。
-3. 新建 `CadenceArcGraph` 数据资产，配置入口节点、节点和转移。
-4. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图。组件负责时间戳、逐帧推进、按键配对和请求出口。需要方向等事件上下文时，让角色实现 `ICadenceArcInputContextProvider`。
-5. 使用 Enhanced Input 时，新建 `CadenceArcInputActionSet` 资产，为每个 Input Action 配置输入 Tag 和输入方式，再在角色上添加 `UCadenceArcInputBinderComponent` 并指定这个资产。角色被控制后自动绑定，详见[Enhanced Input 适配](Docs/EnhancedInput.md)。使用其他输入系统时，在组件的 `InputModes` 中配置输入方式，并在输入绑定中调用 `PressInput` 和 `ReleaseInput`。需要按住的输入配置 `HoldRelease`，只在部分动作中蓄力的输入配置 `HoldIfAvailable`。
-6. 执行器订阅 `OnActionRequested`，并回调动作的生命周期：
+2. 新建 `CadenceArcGraph` 数据资产，配置入口节点、节点和转移。
+3. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图。组件负责时间戳、逐帧推进、按键配对和请求出口。需要方向等事件上下文时，让角色实现 `ICadenceArcInputContextProvider`。
+4. 使用 Enhanced Input 时，新建 `CadenceArcInputActionSet` 资产，为每个 Input Action 配置输入 Tag 和输入方式，再在角色上添加 `UCadenceArcInputBinderComponent` 并指定这个资产。角色被控制后自动绑定，详见[Enhanced Input 适配](Docs/EnhancedInput.md)。需要按住的输入配置 `HoldRelease`，只在部分动作中蓄力的输入配置 `HoldIfAvailable`。
+5. 实现执行器：订阅 `OnActionRequested`，并回调动作的生命周期。
+
+### C++
+
+在模块的 `Build.cs` 中添加依赖 `"CadenceArc"` 和 `"GameplayTags"`；使用 Enhanced Input 适配时，再添加 `"CadenceArcEnhancedInput"`。使用其他输入系统时，在组件的 `InputModes` 中配置输入方式，并在输入绑定中调用 `PressInput` 和 `ReleaseInput`。
 
 ```cpp
 // 不使用适配组件时的输入绑定：输入方式来自 InputModes，事件上下文来自角色的 CollectInputContext
@@ -62,7 +69,17 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 
 组件的完整接口见[CadenceArc 组件](Docs/Component.md)。测试、回放等需要直接控制时间的场景，可以绕过组件直接使用 `UCadenceArcResolver`。
 
-完整示例见 [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox)。它使用 Enhanced Input 适配模块和基于 Timer 的演示执行器驱动 CadenceArc，包含按住输入和转移条件的演示。
+### 蓝图
+
+只使用蓝图时不需要编写 C++，也不需要修改 `Build.cs`。在 `CadenceArc` 组件的 Events 中添加 `On Action Requested`，在事件图中确认请求、打开和关闭缓冲窗口并报告完成：
+
+![蓝图示例的执行器](Docs/Images/blueprint-sample-executor.png)
+
+*Sandbox 中的蓝图示例：上一行确认请求并发送 GAS 事件，下一行依次打开缓冲窗口、关闭缓冲窗口并完成动作。*
+
+完整步骤见[蓝图接入](Docs/Blueprint.md)。
+
+完整示例见 [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox)：`L_CadenceArcDemo` 使用 C++ 和基于 Timer 的演示执行器，`L_CadenceArcBlueprintDemo` 只使用蓝图。两个示例都包含按住输入和转移条件。
 
 ## 文档
 
@@ -80,10 +97,10 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 
 ## 状态
 
-当前版本为 `0.4.0-alpha`，仍处于实验阶段。稳定版发布前，API 和资产格式都可能调整。
+当前版本为 `0.5.0-alpha`，仍处于实验阶段。稳定版发布前，API 和资产格式都可能调整。
 
 - 已完成：核心解析与握手、输入缓冲与过期、按住与蓄力（Phase 6）、运行时调试器（Phase 7）、转移条件与优先级（Phase 8）。
-- 已完成标准接入组件、Enhanced Input 适配和蓝图接口。蓝图接入的最小用法尚未在 Sandbox 中搭建验证。
+- 已完成标准接入组件、Enhanced Input 适配和蓝图接口。Sandbox 中的蓝图示例已在 PIE 中验证。
 - 按住相关的 API 尚未在已上线的游戏中使用，易用性可能继续调整。
 - Sandbox 目前使用基于 Timer 的演示执行器，尚未在动画蒙太奇执行器上实测。
 
