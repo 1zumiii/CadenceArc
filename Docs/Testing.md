@@ -40,7 +40,7 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 
 | 文件 | 覆盖 |
 | --- | --- |
-| `CadenceArcInputBinderTests.cpp` | 触发事件到组件调用的映射、输入方式写入、无效和重复条目、重复绑定和解除绑定时取消按下中的输入、只取消已绑定的输入 |
+| `CadenceArcInputBinderTests.cpp` | 触发事件到组件调用的映射、输入方式写入、无效和重复条目、重复绑定和解除绑定时取消按下中的输入、只取消已绑定的输入、Pawn Restart 后自动绑定、控制器变化时的取消 |
 
 ## 编辑器模块测试
 

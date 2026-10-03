@@ -18,7 +18,8 @@ class UEnhancedInputComponent;
  * - Canceled 调用 CancelInput，不当作松开。
  * 绑定时把 ActionSet 中的输入方式写入 CadenceArc 组件，输入方式只需在 ActionSet 中维护一份。
  *
- * 用法：在 Pawn 的 SetupPlayerInputComponent 中调用 BindInputActions。重复调用会先解除上一次绑定。
+ * 用法：放在 Pawn 上并指定 ActionSet。Pawn 每次被控制并创建输入组件后（Restart），组件自动绑定，C++ 和蓝图都不需要额外调用。
+ * 也可以手动调用 BindInputActions，例如在 SetupPlayerInputComponent 中使用另一份 ActionSet。重复调用会先解除上一次绑定。
  * 控制器变化（例如取消控制 Pawn）时，Pawn 会销毁输入组件，收不到按住中的键的 Completed，
  * 这里会自动取消已绑定的、仍处于按下状态的输入。
  *
@@ -38,10 +39,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Input")
 	TObjectPtr<UCadenceArcInputActionSet> ActionSet;
 
-	// 绑定 ActionSet 中的所有有效条目，返回绑定成功的条目数。InActionSet 不为空时先替换 ActionSet。
+	// 所属 Pawn 每次 Restart 时，自动绑定到它的 Enhanced Input 组件。已经绑定到同一个输入组件时不重复绑定。
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Input")
+	bool bAutoBind = true;
+
+	// 绑定 ActionSet 中的所有有效条目，返回绑定成功的条目数。InputComponent 为空时使用所属 Actor 的输入组件；
+	// InActionSet 不为空时先替换 ActionSet。
 	// 目标组件默认是所属 Actor 上的 UCadenceArcComponent，可以用 SetTargetComponent 指定。
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Input")
-	int32 BindInputActions(UEnhancedInputComponent* InputComponent, UCadenceArcInputActionSet* InActionSet = nullptr);
+	int32 BindInputActions(UEnhancedInputComponent* InputComponent = nullptr, UCadenceArcInputActionSet* InActionSet = nullptr);
 
 	// 解除绑定，并取消已绑定的、仍处于按下状态的输入。EndPlay 时自动调用。
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|Input")
@@ -61,9 +67,12 @@ public:
 	UCadenceArcComponent* GetTargetComponent() const;
 
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Input")
-	bool IsBound() const { return BindingHandles.Num() > 0; }
+	bool IsBound() const;
 
 protected:
+	virtual void OnRegister() override;
+	virtual void OnUnregister() override;
+	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
@@ -79,6 +88,12 @@ private:
 	void HandleStarted(FGameplayTag InputTag);
 	void HandleCompleted(FGameplayTag InputTag);
 	void HandleCanceled(FGameplayTag InputTag);
+
+	// bAutoBind 时，在所属 Pawn 已有 Enhanced Input 组件且尚未绑定到它时绑定
+	void TryAutoBind();
+
+	UFUNCTION()
+	void HandlePawnRestarted(APawn* Pawn);
 
 	UFUNCTION()
 	void HandleControllerChanged(APawn* Pawn, AController* OldController, AController* NewController);

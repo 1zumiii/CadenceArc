@@ -5,6 +5,7 @@
 // - 绑定时把 ActionSet 中的输入方式写入目标组件；无效和重复的条目被跳过。
 // - 重复绑定先解除上一次绑定，并取消上一次绑定中仍处于按下状态的输入。
 // - CancelBoundInputs 只取消本组件绑定的输入。
+// - 放在 Pawn 上时，Pawn Restart 后自动绑定到它的输入组件，不重复绑定；控制器变化时取消按住中的输入。
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -12,6 +13,9 @@
 #include "CadenceArcInputBinderComponent.h"
 #include "Component/CadenceArcComponent.h"
 #include "EnhancedInputComponent.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "GameFramework/Pawn.h"
 #include "Graph/CadenceArcGraph.h"
 #include "InputAction.h"
 #include "Misc/AutomationTest.h"
@@ -249,6 +253,84 @@ namespace CadenceArc::Tests::EnhancedInput
 		// 取消后真实的 Completed 到达：组件把它当作没有按下的松开，不产生请求
 		Fixture.Fire(Fixture.HeavyAction, ETriggerEvent::Completed);
 		TestEqual(TEXT("Late Completed produces no request"), Fixture.Requested.Num(), 0);
+		return !HasAnyErrors();
+	}
+	// 只用于这个测试的 Game World。没有 BeginPlay 和 Tick，Pawn 的 Restart 和控制器变化由测试直接触发。
+	struct FScopedBinderWorld
+	{
+		UWorld* World = nullptr;
+
+		FScopedBinderWorld()
+		{
+			World = UWorld::CreateWorld(EWorldType::Game, false, TEXT("CadenceArcBinderTestWorld"));
+			GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+		}
+
+		~FScopedBinderWorld()
+		{
+			GEngine->DestroyWorldContext(World);
+			World->DestroyWorld(false);
+		}
+	};
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcInputBinderAutoBindTest,
+		"CadenceArc.EnhancedInput.Binder.AutoBindsOnPawnRestart",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcInputBinderAutoBindTest::RunTest(const FString& Parameters)
+	{
+		FBinderFixture Fixture(*this); // 只借用其中的动作图、Input Action 和 ActionSet
+		FScopedBinderWorld TestWorld;
+		APawn* Pawn = TestWorld.World->SpawnActor<APawn>();
+		if (!TestNotNull(TEXT("Pawn spawned"), Pawn))
+		{
+			return false;
+		}
+
+		UCadenceArcComponent* Target = NewObject<UCadenceArcComponent>(Pawn);
+		Target->RegisterComponent();
+		double Now = 1.0;
+		Target->SetTimeSource([&Now]() { return Now; });
+		Target->InitializeResolver(MakeGraph());
+
+		UCadenceArcInputBinderComponent* Binder = NewObject<UCadenceArcInputBinderComponent>(Pawn);
+		Binder->ActionSet = Fixture.ActionSet;
+		Binder->RegisterComponent();
+		TestFalse(TEXT("No input component yet, nothing bound"), Binder->IsBound());
+		TestTrue(TEXT("Target found on the owner"), Binder->GetTargetComponent() == Target);
+
+		// 模拟玩家控制：PawnClientRestart 创建输入组件，然后广播 Restarted
+		UEnhancedInputComponent* InputComponent = NewObject<UEnhancedInputComponent>(Pawn);
+		Pawn->InputComponent = InputComponent;
+		Pawn->DispatchRestart(false);
+		TestTrue(TEXT("Restart binds automatically"), Binder->IsBound());
+		TestEqual(TEXT("Bound to the pawn input component"), InputComponent->GetActionEventBindings().Num(), 6);
+		Pawn->DispatchRestart(false);
+		TestEqual(TEXT("Second restart does not bind twice"), InputComponent->GetActionEventBindings().Num(), 6);
+
+		// 同一个输入组件上的绑定可能在 Pawn 初始化期间被清空；旧 handle 不能当作仍然绑定。
+		InputComponent->ClearActionEventBindings();
+		TestFalse(TEXT("Cleared bindings invalidate IsBound even when the input component is unchanged"), Binder->IsBound());
+		Pawn->DispatchRestart(false);
+		TestTrue(TEXT("Restart restores bindings removed by initialization"), Binder->IsBound());
+		TestEqual(TEXT("Restored exactly one set of bindings"), InputComponent->GetActionEventBindings().Num(), 6);
+
+		// 按住时控制器变化：输入组件不会再发 Completed，按下被取消
+		FBinderFixture::Fire(InputComponent, Fixture.HeavyAction, ETriggerEvent::Started);
+		TestTrue(TEXT("Heavy pressed through auto binding"), Target->IsInputPressed(Input_Heavy));
+		Pawn->NotifyControllerChanged();
+		TestFalse(TEXT("Controller change cancels the held Heavy"), Target->IsInputPressed(Input_Heavy));
+
+		// 关闭自动绑定后，新的 Restart 不再绑定
+		Binder->UnbindInputActions();
+		Binder->bAutoBind = false;
+		Pawn->DispatchRestart(false);
+		TestFalse(TEXT("bAutoBind false skips restart binding"), Binder->IsBound());
+
+		// 手动绑定时省略输入组件，使用所属 Actor 的输入组件
+		TestEqual(TEXT("Manual bind defaults to the owner input component"), Binder->BindInputActions(), 2);
+		TestEqual(TEXT("Owner input component bound"), InputComponent->GetActionEventBindings().Num(), 6);
 		return !HasAnyErrors();
 	}
 }

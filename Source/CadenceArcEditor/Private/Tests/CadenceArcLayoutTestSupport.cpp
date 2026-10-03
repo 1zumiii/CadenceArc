@@ -283,7 +283,7 @@ namespace CadenceArc::Editor::Tests
 		ExpectGeometry(Test, Layout);
 	}
 
-	// 仿照 Sandbox 的 DA_TestComboGraphCombo（真实形状：分支树 + 共享终结技 + 一条循环回边）。
+	// 仿照 Sandbox 的 DA_ComboGraphCombo（真实形状：分支树 + 共享终结技 + 一条循环回边）。
 	// 布局只比较 Tag 是否相同，这里借用两个输入 Tag 充当第 9、10 个动作节点。
 	UCadenceArcGraph* MakeRealComboGraph()
 	{

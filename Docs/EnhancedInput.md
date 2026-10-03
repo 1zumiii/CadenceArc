@@ -14,19 +14,25 @@
 
 ## 接入步骤
 
-1. 在模块的 `Build.cs` 中添加依赖 `"CadenceArcEnhancedInput"`。
+1. 在模块的 `Build.cs` 中添加依赖 `"CadenceArcEnhancedInput"`。只使用蓝图时跳过这一步。
 2. 新建 `CadenceArcInputActionSet` 数据资产，为每个连招输入添加一条映射。项目已有输入配置资产时，可以让它继承 `UCadenceArcInputActionSet`。
 3. 在角色上添加 `UCadenceArcInputBinderComponent`，并在 `ActionSet` 属性中指定上一步的资产。
-4. 在 `SetupPlayerInputComponent` 中调用 `BindInputActions`：
+4. 角色被玩家控制后，适配组件自动绑定，不需要编写代码。
+
+自动绑定发生在 Pawn 的 Restart 之后。此时 Pawn 已经在 `PawnClientRestart` 中创建输入组件并调用了 `SetupPlayerInputComponent`。组件在 `BeginPlay` 时也会检查一次，以覆盖 `BeginPlay` 之前就已被控制的 Pawn。没有玩家控制的 Pawn（例如 AI）没有输入组件，不会绑定。
+
+需要在代码中决定使用哪份映射时，可以关闭 `bAutoBind`，或在 `SetupPlayerInputComponent` 中手动绑定。手动绑定后，同一个输入组件上的自动绑定会跳过：
 
 ```cpp
 void AMyCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
     Super::SetupPlayerInputComponent(PlayerInputComponent);
     UEnhancedInputComponent* Input = CastChecked<UEnhancedInputComponent>(PlayerInputComponent);
-    CadenceArcInputBinder->BindInputActions(Input); // 也可以传入第二个参数，替换 ActionSet
+    CadenceArcInputBinder->BindInputActions(Input, MyActionSet); // 第二个参数替换 ActionSet
 }
 ```
+
+蓝图中的完整用法见[蓝图接入](Blueprint.md)。
 
 Mapping Context 的添加和优先级仍由项目管理，适配模块不处理。
 
@@ -72,7 +78,8 @@ CadenceArc 依靠 `Started` 和 `Completed` 判断物理按下和松开，并由
 | 接口 | 说明 |
 | --- | --- |
 | `ActionSet` | 要绑定的映射资产 |
-| `BindInputActions(InputComponent, ActionSet = nullptr)` | 解除上一次绑定后重新绑定，返回绑定的条目数 |
+| `bAutoBind` | 默认开启。所属 Pawn 每次 Restart 后自动绑定 |
+| `BindInputActions(InputComponent = nullptr, ActionSet = nullptr)` | 解除上一次绑定后重新绑定，返回绑定的条目数。输入组件为空时使用所属 Actor 的输入组件 |
 | `UnbindInputActions()` | 解除绑定，并取消仍处于按下状态的已绑定输入 |
 | `CancelBoundInputs()` | 只取消输入，保留绑定 |
 | `SetTargetComponent` / `GetTargetComponent` | 指定或查询转发目标 |

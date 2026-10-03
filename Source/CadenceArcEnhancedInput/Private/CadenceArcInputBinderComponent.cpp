@@ -17,6 +17,10 @@ UCadenceArcInputBinderComponent::UCadenceArcInputBinderComponent()
 int32 UCadenceArcInputBinderComponent::BindInputActions(
 	UEnhancedInputComponent* InputComponent, UCadenceArcInputActionSet* InActionSet)
 {
+	if (!InputComponent && GetOwner())
+	{
+		InputComponent = Cast<UEnhancedInputComponent>(GetOwner()->InputComponent);
+	}
 	UnbindInputActions();
 	if (InActionSet)
 	{
@@ -70,11 +74,6 @@ int32 UCadenceArcInputBinderComponent::BindInputActions(
 	}
 	BoundInputComponent = InputComponent;
 
-	// 取消控制时 Pawn 先销毁输入组件，按住中的键收不到 Completed
-	if (APawn* Pawn = Cast<APawn>(GetOwner()))
-	{
-		Pawn->ReceiveControllerChangedDelegate.AddUniqueDynamic(this, &ThisClass::HandleControllerChanged);
-	}
 	return BoundTags.Num();
 }
 
@@ -91,6 +90,26 @@ void UCadenceArcInputBinderComponent::UnbindInputActions()
 	BindingHandles.Reset();
 	BoundTags.Reset();
 	BoundInputComponent.Reset();
+}
+
+bool UCadenceArcInputBinderComponent::IsBound() const
+{
+	const UEnhancedInputComponent* InputComponent = BoundInputComponent.Get();
+	if (!InputComponent || BindingHandles.IsEmpty())
+	{
+		return false;
+	}
+	// Pawn 初始化或外部代码可能清空输入绑定，而输入组件对象仍然存在。
+	// 只有记录的 handle 全部还在组件中，才可以跳过下一次自动绑定。
+	const auto& Bindings = InputComponent->GetActionEventBindings();
+	for (const uint32 Handle : BindingHandles)
+	{
+		if (!Bindings.ContainsByPredicate([Handle](const auto& Binding) { return Binding->GetHandle() == Handle; }))
+		{
+			return false;
+		}
+	}
+	return true;
 }
 
 void UCadenceArcInputBinderComponent::CancelBoundInputs()
@@ -126,14 +145,58 @@ UCadenceArcComponent* UCadenceArcInputBinderComponent::GetTargetComponent() cons
 	return Owner ? Owner->FindComponentByClass<UCadenceArcComponent>() : nullptr;
 }
 
+void UCadenceArcInputBinderComponent::OnRegister()
+{
+	Super::OnRegister();
+	if (APawn* Pawn = Cast<APawn>(GetOwner()))
+	{
+		// Pawn 在 PawnClientRestart 中创建输入组件，之后广播 Restarted
+		Pawn->ReceiveRestartedDelegate.AddUniqueDynamic(this, &ThisClass::HandlePawnRestarted);
+		// 取消控制时 Pawn 先销毁输入组件，按住中的键收不到 Completed
+		Pawn->ReceiveControllerChangedDelegate.AddUniqueDynamic(this, &ThisClass::HandleControllerChanged);
+	}
+}
+
+void UCadenceArcInputBinderComponent::OnUnregister()
+{
+	if (APawn* Pawn = Cast<APawn>(GetOwner()))
+	{
+		Pawn->ReceiveRestartedDelegate.RemoveDynamic(this, &ThisClass::HandlePawnRestarted);
+		Pawn->ReceiveControllerChangedDelegate.RemoveDynamic(this, &ThisClass::HandleControllerChanged);
+	}
+	Super::OnUnregister();
+}
+
+void UCadenceArcInputBinderComponent::BeginPlay()
+{
+	Super::BeginPlay();
+	TryAutoBind(); // Pawn 可能在 BeginPlay 之前就已经被控制
+}
+
 void UCadenceArcInputBinderComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	UnbindInputActions();
-	if (APawn* Pawn = Cast<APawn>(GetOwner()))
-	{
-		Pawn->ReceiveControllerChangedDelegate.RemoveDynamic(this, &ThisClass::HandleControllerChanged);
-	}
 	Super::EndPlay(EndPlayReason);
+}
+
+void UCadenceArcInputBinderComponent::TryAutoBind()
+{
+	const AActor* Owner = GetOwner();
+	if (!bAutoBind || !ActionSet || !Owner)
+	{
+		return;
+	}
+	UEnhancedInputComponent* InputComponent = Cast<UEnhancedInputComponent>(Owner->InputComponent);
+	if (!InputComponent || (IsBound() && BoundInputComponent.Get() == InputComponent))
+	{
+		return; // 没有玩家控制（例如 AI），或已经手动绑定到这个输入组件
+	}
+	BindInputActions(InputComponent);
+}
+
+void UCadenceArcInputBinderComponent::HandlePawnRestarted(APawn* Pawn)
+{
+	TryAutoBind();
 }
 
 void UCadenceArcInputBinderComponent::HandleStarted(const FGameplayTag InputTag)
