@@ -272,5 +272,9 @@ public:
 #if WITH_EDITOR
 	// 调试历史：编辑器面板按序号拉取，读取只复制，不改变任何状态
 	const FCadenceArcDebugHistory& GetDebugHistory() const { return DebugHistory; }
+	// 输入显示用：最近一次调用方传入的有效时间（宿主每帧推进输入时间，所以约等于"现在"），
+	// 以及停顿起点（最近一次成功完成的时间）。负数表示还没有
+	double GetDebugLastHostTime() const { return DebugLastHostTime; }
+	double GetDebugPauseAnchorSeconds() const { return LastCompletionTimestampSeconds; }
 #endif
 };

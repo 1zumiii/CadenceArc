@@ -26,9 +26,11 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 | `Resolver/CadenceArcResolverLifecycleTests.cpp` | 生命周期回调、取消、打断、重置 |
 | `Resolver/CadenceArcResolverTimeTests.cpp` | 时间戳和缓冲过期 |
 | `Resolver/CadenceArcResolverHoldTests.cpp` | 按住资格、阶段、手动和自动松手、蓄力保护、小数阈值边界 |
-| `Resolver/CadenceArcResolverDebugHistoryTests.cpp` | 调试历史的记录顺序、失败分类、借用的时间、环形缓冲（仅编辑器构建） |
+| `Resolver/CadenceArcResolverConditionTests.cpp` | 转移条件：默认值等价、上下文并集和层级匹配、优先级、`ConditionNotMet`、运行时歧义、停顿区间、按住的上下文和停顿 |
+| `Resolver/CadenceArcResolverDebugHistoryTests.cpp` | 调试历史的记录顺序、失败分类、借用的时间、环形缓冲、选边时的上下文和停顿（仅编辑器构建） |
 | `Graph/CadenceArcGraphValidationTests.cpp` | 图的拓扑校验 |
 | `Graph/CadenceArcHoldValidationTests.cpp` | 阶段、时长区间、蓄力配置、旧名重定向 |
+| `Graph/CadenceArcConditionValidationTests.cpp` | 条件下的重叠规则、单边条件矛盾、无效停顿区间、可达性警告 |
 | `Input/CadenceArcInputTrackerTests.cpp` | 按下和松开的配对、时长、Token |
 
 ## 编辑器模块测试
@@ -43,8 +45,10 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 | `CadenceArcLayoutRoutingTests.cpp` | 直角折线（端点不变、竖线不共用）、端口重排（交叉变少） |
 | `CadenceArcLayoutCompactChainTests.cpp` | 紧凑链的成组条件和模式切换 |
 | `CadenceArcViewportMathTests.cpp` | 跟随缩放和滚动、视口外提示、命中测试 |
-| `CadenceArcDebugViewTests.cpp` | 实时视图模型：当前节点、候选、预备边、分支距离 |
+| `CadenceArcDebugViewTests.cpp` | 实时视图模型：当前节点、候选、预备边（含按条件选档位）、分支距离 |
 | `CadenceArcDebugEventTextTests.cpp` | Arc History 显示的文字 |
+| `CadenceArcConditionTextTests.cpp` | 端口行的条件标注、未满足条件的说明、条件类失败和选边上下文的文字 |
+| `CadenceArcInputDisplayTests.cpp` | 左下角输入显示：最近输入、上下文、缓冲和忽略标记、按住、停顿、变暗 |
 
 ## 覆盖重点
 

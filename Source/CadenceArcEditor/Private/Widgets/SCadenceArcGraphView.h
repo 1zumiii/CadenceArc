@@ -6,6 +6,8 @@
 #include "Widgets/SCompoundWidget.h"
 
 class SCadenceArcGraphCanvas;
+class SCadenceArcInputStrip;
+struct FCadenceArcInputDisplay;
 class SCanvas;
 class SScrollBox;
 class UCadenceArcGraph;
@@ -34,6 +36,9 @@ public:
 	// 显示一帧调试状态：更新画布，再按它跟随、同步历史焦点、更新视口外提示
 	void ShowDebugView(const FCadenceArcDebugView& View);
 
+	// 左下角的输入显示；bVisible 为 false 或没有有效数据时隐藏
+	void ShowInputDisplay(const FCadenceArcInputDisplay& Display, bool bVisible);
+
 	// 换一套布局选项；布局变了，下一帧按新位置重新定位当前节点
 	void SetLayoutParams(const FCadenceArcLayoutParams& Params);
 	const FCadenceArcLayoutParams& GetLayoutParams() const;
@@ -46,6 +51,7 @@ public:
 
 private:
 	TSharedPtr<SCadenceArcGraphCanvas> Canvas;
+	TSharedPtr<SCadenceArcInputStrip> InputStrip;
 	TSharedPtr<SScrollBox> HorizontalScroll;
 	TSharedPtr<SScrollBox> VerticalScroll;
 

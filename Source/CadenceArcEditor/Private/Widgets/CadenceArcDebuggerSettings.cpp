@@ -16,6 +16,7 @@ FCadenceArcDebuggerSettings FCadenceArcDebuggerSettings::Load()
 	GConfig->GetBool(DebuggerConfigSection, TEXT("bCompactChains"), Settings.bCompactChains, GEditorPerProjectIni);
 	GConfig->GetBool(DebuggerConfigSection, TEXT("bUseReferences"), Settings.bUseReferences, GEditorPerProjectIni);
 	GConfig->GetInt(DebuggerConfigSection, TEXT("ReferenceMinSpan"), Settings.ReferenceMinSpan, GEditorPerProjectIni);
+	GConfig->GetBool(DebuggerConfigSection, TEXT("bShowInputDisplay"), Settings.bShowInputDisplay, GEditorPerProjectIni);
 	Settings.ReferenceMinSpan = FMath::Clamp(Settings.ReferenceMinSpan, 2, 9);
 	return Settings;
 }
@@ -27,6 +28,7 @@ void FCadenceArcDebuggerSettings::Save() const
 	GConfig->SetBool(DebuggerConfigSection, TEXT("bCompactChains"), bCompactChains, GEditorPerProjectIni);
 	GConfig->SetBool(DebuggerConfigSection, TEXT("bUseReferences"), bUseReferences, GEditorPerProjectIni);
 	GConfig->SetInt(DebuggerConfigSection, TEXT("ReferenceMinSpan"), ReferenceMinSpan, GEditorPerProjectIni);
+	GConfig->SetBool(DebuggerConfigSection, TEXT("bShowInputDisplay"), bShowInputDisplay, GEditorPerProjectIni);
 }
 
 void FCadenceArcDebuggerSettings::ApplyTo(FCadenceArcLayoutParams& Params) const

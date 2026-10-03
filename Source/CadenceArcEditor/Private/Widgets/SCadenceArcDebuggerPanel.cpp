@@ -10,6 +10,7 @@
 #include "Graph/CadenceArcGraph.h"
 #include "Resolver/CadenceArcResolver.h"
 #include "ViewModel/CadenceArcDebuggerSelection.h"
+#include "ViewModel/CadenceArcInputDisplay.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectIterator.h"
 #include "Widgets/Input/SButton.h"
@@ -221,6 +222,7 @@ void SCadenceArcDebuggerPanel::RefreshSelectedResolver()
 		LastObservedActionTag = CurrentActionTag;
 	}
 	GraphView->ShowDebugView(LatestView);
+	GraphView->ShowInputDisplay(Resolver ? BuildInputDisplay(*Resolver) : FCadenceArcInputDisplay{}, Settings.bShowInputDisplay);
 	RuntimeDetails->Update(Resolver != nullptr, LatestView, DisplayedHoldSnapshot);
 	Invalidate(EInvalidateWidgetReason::Layout | EInvalidateWidgetReason::Paint);
 }
@@ -293,6 +295,12 @@ TSharedRef<SWidget> SCadenceArcDebuggerPanel::MakeLayoutMenu()
 			})
 		],
 		FText::FromString(TEXT("Minimum span (columns)")));
+	Menu.EndSection();
+
+	Menu.BeginSection(NAME_None, FText::FromString(TEXT("Overlays")));
+	AddToggle(TEXT("Input display"),
+	          TEXT("Show the inputs the resolver received in the last two seconds in the lower-left corner: input tag, the context the event carried, hold time, and whether it was buffered or ignored. Also shows the persistent context and the pause since the last completed action. These are semantic inputs, not physical keys."),
+	          &FCadenceArcDebuggerSettings::bShowInputDisplay);
 	Menu.EndSection();
 	return Menu.MakeWidget();
 }

@@ -19,6 +19,7 @@ namespace
 		Record.InputPhase = Event.InputPhase;
 		Record.bHasTimestamp = true;
 		Record.TimestampSeconds = Event.TimestampSeconds;
+		Record.InputContextTags = Event.ContextTags;
 		if (Event.InputPhase == ECadenceArcInputPhase::Released)
 		{
 			Record.bHasHeldDuration = true;
@@ -54,6 +55,7 @@ namespace
 			Record.ReleaseSource = Outcome.GetReleaseSource();
 			Record.bHasHeldDuration = true;
 			Record.HeldDurationSeconds = Outcome.GetReleasedInput().HeldDurationSeconds; // 自动释放时是截止时刻的时长
+			Record.InputContextTags = Outcome.GetReleasedInput().ContextTags; // 自动释放沿用按下时的上下文
 			RecordResolution(Record, Outcome.GetResolution());
 		}
 	}

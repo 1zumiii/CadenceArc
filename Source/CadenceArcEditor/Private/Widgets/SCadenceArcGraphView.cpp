@@ -1,6 +1,7 @@
 #include "SCadenceArcGraphView.h"
 
 #include "SCadenceArcGraphCanvas.h"
+#include "SCadenceArcInputStrip.h"
 #include "Layout/CadenceArcViewportMath.h"
 #include "Styling/CoreStyle.h"
 #include "ViewModel/CadenceArcDebuggerSelection.h"
@@ -35,6 +36,15 @@ void SCadenceArcGraphView::Construct(const FArguments& InArgs)
 			SAssignNew(HintCanvas, SCanvas)
 			.Visibility(EVisibility::SelfHitTestInvisible)
 		]
+		// 输入显示固定在左下角，不随画布滚动，也不挡鼠标
+		+ SOverlay::Slot()
+		.HAlign(HAlign_Left)
+		.VAlign(VAlign_Bottom)
+		.Padding(10.f, 0.f, 0.f, 22.f) // 底部留出横向滚动条
+		[
+			SAssignNew(InputStrip, SCadenceArcInputStrip)
+			.Visibility(EVisibility::Collapsed)
+		]
 	];
 	Canvas->SetGraph(nullptr);
 	// 画布识别手势，滚动区在这里：右键或中键拖动平移，Ctrl + 滚轮缩放，左键点引用标签跳转
@@ -61,6 +71,16 @@ void SCadenceArcGraphView::ShowDebugView(const FCadenceArcDebugView& View)
 	FollowCommittedNode();
 	ApplyHistoryFocus();
 	UpdateOffscreenHints();
+}
+
+void SCadenceArcGraphView::ShowInputDisplay(const FCadenceArcInputDisplay& Display, const bool bVisible)
+{
+	const bool bShow = bVisible && Display.bValid;
+	InputStrip->SetVisibility(bShow ? EVisibility::HitTestInvisible : EVisibility::Collapsed);
+	if (bShow)
+	{
+		InputStrip->SetDisplay(Display);
+	}
 }
 
 void SCadenceArcGraphView::SetLayoutParams(const FCadenceArcLayoutParams& Params)

@@ -47,6 +47,7 @@ struct FCadenceArcDebugEvent
 	bool bHasHeldDuration = false; // 松手（手动或自动）时的按住时长
 	double HeldDurationSeconds = 0.0;
 	int64 CallerRequestId = 0; // 握手与窗口操作时调用方传入的请求编号
+	FGameplayTagContainer InputContextTags; // 输入事件自带的上下文（不含持久上下文）；没有输入参数的操作为空
 
 	// ---- 结果（只填与操作相关的字段） ----
 	ECadenceArcResolverInitResult InitResult = ECadenceArcResolverInitResult::Success;

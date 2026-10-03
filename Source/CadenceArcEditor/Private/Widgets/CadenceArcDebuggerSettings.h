@@ -13,6 +13,7 @@ struct FCadenceArcDebuggerSettings
 	bool bCompactChains = false; // 简单链纵向展开
 	bool bUseReferences = false; // 长边改成引用标签
 	int32 ReferenceMinSpan = 3; // 列号差不小于它的边改成引用标签（2 .. 9）
+	bool bShowInputDisplay = true; // 画布左下角显示解析器最近收到的输入、上下文和停顿
 
 	static FCadenceArcDebuggerSettings Load();
 	void Save() const;

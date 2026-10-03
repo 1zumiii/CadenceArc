@@ -43,3 +43,11 @@
 ## 松手必须带 Token
 
 `SubmitInput` 现在会以 `InputIdentityRequired` 拒绝 `Released` 事件。松手必须带着按下时的 Token，通过 `ReleaseInputHold` 提交。阶段或按住时长不一致的事件，以 `InvalidInputEvent` 拒绝。
+
+## 转移条件与优先级（0.4.0）
+
+已有的资产不用改：新字段的默认值（优先级 0、没有条件、不看停顿）下，解析结果和之前一样。需要注意的地方：
+
+- `ECadenceArcResolutionReason` 追加了 `ConditionNotMet` 和 `AmbiguousTransition`，已有的值不变。对它做穷举 switch 的代码需要处理这两个成员。
+- 图校验放宽了“重叠的转移”：以前同源、同 Tag、同阶段、时长区间重叠就报错，现在还要优先级相同、停顿区间重叠、条件可能同时满足，才报错。以前通不过校验的图，加上优先级或互斥条件后就能用。重叠报错的文字也变了，按原文匹配报错的测试需要更新。
+- `UCadenceArcGraph::ValidateGraph` 多了一个可选参数 `TArray<FText>* OutWarnings`，用来接收“走不到的节点”这类警告。只传错误数组的旧调用不用改。
