@@ -51,3 +51,8 @@
 - `ECadenceArcResolutionReason` 追加了 `ConditionNotMet` 和 `AmbiguousTransition`，已有的值不变。对它做穷举 switch 的代码需要处理这两个成员。
 - 图校验放宽了“重叠的转移”：以前同源、同 Tag、同阶段、时长区间重叠就报错，现在还要优先级相同、停顿区间重叠、条件可能同时满足，才报错。以前通不过校验的图，加上优先级或互斥条件后就能用。重叠报错的文字也变了，按原文匹配报错的测试需要更新。
 - `UCadenceArcGraph::ValidateGraph` 多了一个可选参数 `TArray<FText>* OutWarnings`，用来接收“走不到的节点”这类警告。只传错误数组的旧调用不用改。
+
+## 头文件调整（0.4.0 之后）
+
+- `FCadenceArcInputEvent` 从 `Resolver/CadenceArcResolverTypes.h` 移到 `Input/CadenceArcInputTypes.h`。结构体名字和所在模块不变，蓝图和资产不受影响。`CadenceArcResolverTypes.h` 仍然包含它，原来的 include 照样能编译。
+- `Input/CadenceArcInputTrackingTypes.h` 不再包含 `Resolver/CadenceArcResolverTypes.h`。只 include 了 Tracker 的头文件、却用到 `FCadenceArcSubmitOutcome` 这类解析器类型的代码，需要自己加上 `#include "Resolver/CadenceArcResolverTypes.h"`。

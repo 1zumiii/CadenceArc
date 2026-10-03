@@ -1,7 +1,5 @@
 #include "Graph/CadenceArcGraphTypes.h"
 
-#include "Resolver/CadenceArcResolverTypes.h"
-
 namespace
 {
 	bool IsKnownPhase(const ECadenceArcInputPhase Phase)

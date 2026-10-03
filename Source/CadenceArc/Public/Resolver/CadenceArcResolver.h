@@ -10,11 +10,6 @@
 
 class UCadenceArcGraph;
 
-namespace CadenceArc::GraphQuery
-{
-	struct FTransitionMatch;
-}
-
 DECLARE_LOG_CATEGORY_EXTERN(LogCadenceArc, Log, All);
 
 /**
@@ -46,7 +41,7 @@ private:
 		bool bFromHold = false; // 区分按住释放产生的事件与直接提交的输入
 		double LastObservedTimestampSeconds = 0.0;
 		FGameplayTag SourceActionTag;
-		int64 GrantedContextId = 0; // 授予资格时记下的编号      
+		int64 GrantedContextId = 0; // 授予资格时记下的 CurrentContextId
 		bool bHasChargeConfig = false;
 		FCadenceArcHoldChargeConfig ChargeConfig;
 		TArray<FCadenceArcTransition> ReleasedEdges; // 按住释放时的边集合,用于在 ResolveInput 时进行匹配
@@ -67,10 +62,17 @@ private:
 	UPROPERTY(Transient)
 	double LastCompletionTimestampSeconds = -1.0;
 
+	// 一次选边的结果：Reason 为 None 时 TargetActionTag 有效
+	struct FEdgeMatch
+	{
+		ECadenceArcResolutionReason Reason = ECadenceArcResolutionReason::NoMatchingTransition;
+		FGameplayTag TargetActionTag;
+	};
+
 	FGameplayTagContainer MakeResolutionContext(const FCadenceArcInputEvent& Event) const;
-	// 所有按图选边都走这里：合并上下文后调用 GraphQuery::FindUniqueTransition。
+	// 所有按图选边都走这里：合并上下文后调用 GraphQuery::FindUniqueTransition，再把图查询的结果翻译成解析原因。
 	// 编辑器构建中顺便记下这次用到的上下文和停顿，供本次公开调用的调试记录使用。
-	CadenceArc::GraphQuery::FTransitionMatch MatchTransition(
+	FEdgeMatch MatchTransition(
 		const FGameplayTag& SourceActionTag, const FCadenceArcInputEvent& Event, double PauseDurationSeconds,
 		const TArray<FCadenceArcTransition>* EdgesOverride = nullptr);
 	double GetPauseDurationSeconds(const FCadenceArcInputEvent& Event) const;
@@ -85,17 +87,15 @@ private:
 	UPROPERTY(Transient)
 	int64 NextRequestId = 1;
 	UPROPERTY(Transient)
-	int64 CurrentContextId = 0; // 当前执行上下文的编号，成功 Started/Reset/Initialize/Cancelled/Interrupted 时 ++
-	// 消费时：
-	//if (Slot.GrantedContextId != CurrentContextId) { /* 资格已失效 */ }
+	// 当前执行上下文的编号，成功 Started/Reset/Initialize/Cancelled/Interrupted 时 ++。
+	// 按住资格记下授予时的编号，编号不同就说明资格已经失效。
+	int64 CurrentContextId = 0;
 
 	// Input Buffering
 	UPROPERTY(Transient)
 	bool bIsBufferWindowOpen = false;
 
-	//UPROPERTY(Transient)
-	// FCadenceArcInputEvent BufferedInputEvent; // 已弃用，被InputSlot替代
-	FCadenceArcInputSlot InputSlot;
+	FCadenceArcInputSlot InputSlot; // 缓冲的输入和按住资格共用这一格
 
 	ECadenceArcHandshakeResult ValidateHandshake(
 		const int64 InRequestId,

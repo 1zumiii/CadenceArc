@@ -2,7 +2,6 @@
 
 #include "Graph/CadenceArcGraph.h"
 #include "Graph/CadenceArcGraphTypes.h"
-#include "Resolver/CadenceArcResolverTypes.h"
 
 namespace CadenceArc::GraphQuery
 {
@@ -14,7 +13,7 @@ namespace CadenceArc::GraphQuery
 		const double PauseDurationSeconds,
 		const TArray<FCadenceArcTransition>* EdgesOverride)
 	{
-		FTransitionMatch Result; // 默认 NoMatchingTransition
+		FTransitionMatch Result; // 默认 NoMatchingInput
 
 		// 1. 决定用哪组边
 		const TArray<FCadenceArcTransition>* Edges = EdgesOverride;
@@ -23,7 +22,7 @@ namespace CadenceArc::GraphQuery
 			const FCadenceArcNode* SourceNode = Graph.FindAction(SourceActionTag);
 			if (!SourceNode)
 			{
-				Result.Reason = ECadenceArcResolutionReason::CurrentNodeNotFound;
+				Result.Result = EMatchResult::SourceNodeNotFound;
 				return Result;
 			}
 			Edges = &SourceNode->Transitions;
@@ -58,25 +57,25 @@ namespace CadenceArc::GraphQuery
 		}
 		if (MatchCount == 0)
 		{
-			Result.Reason = bHasMatchingInput
-				? ECadenceArcResolutionReason::ConditionNotMet
-				: ECadenceArcResolutionReason::NoMatchingTransition;
+			Result.Result = bHasMatchingInput
+				? EMatchResult::ConditionNotMet
+				: EMatchResult::NoMatchingInput;
 			return Result;
 		}
 		if (MatchCount > 1)
 		{
-			Result.Reason = ECadenceArcResolutionReason::AmbiguousTransition;
+			Result.Result = EMatchResult::Ambiguous;
 			return Result;
 		}
 
 		// 3. 目标必须存在于当前图
 		if (!Graph.ContainsAction(Matched->TargetActionTag))
 		{
-			Result.Reason = ECadenceArcResolutionReason::TargetNodeNotFound;
+			Result.Result = EMatchResult::TargetNodeNotFound;
 			return Result;
 		}
 
-		Result.Reason = ECadenceArcResolutionReason::None;
+		Result.Result = EMatchResult::Found;
 		Result.TargetActionTag = Matched->TargetActionTag;
 		return Result;
 	}

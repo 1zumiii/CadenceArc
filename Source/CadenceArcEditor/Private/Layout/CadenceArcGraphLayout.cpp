@@ -1,6 +1,6 @@
 #include "CadenceArcGraphLayout.h"
 
-#include "CadenceArcLayoutBuild.h"
+#include "Layout/Stages/CadenceArcLayoutBuild.h"
 
 // 布局算法的整体说明见 CadenceArcLayoutBuild.h；各阶段的实现按主题分在 Layout/ 下的几个文件里。
 // 这里只规定阶段的先后顺序：后面的阶段依赖前面阶段写入 FBuildContext 的字段。

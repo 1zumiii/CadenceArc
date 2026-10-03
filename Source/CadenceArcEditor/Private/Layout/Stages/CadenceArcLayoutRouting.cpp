@@ -1,6 +1,6 @@
 // 布局第 5 步：走线。底部通道、接入点错开、每条边的实际绘制路径和画布尺寸。
 
-#include "CadenceArcLayoutBuild.h"
+#include "Layout/Stages/CadenceArcLayoutBuild.h"
 
 namespace CadenceArc::Editor::LayoutBuild
 {

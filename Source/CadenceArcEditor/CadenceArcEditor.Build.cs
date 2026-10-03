@@ -1,6 +1,6 @@
 using UnrealBuildTool;
 
-// Editor-only tooling for CadenceArc (Phase 7 runtime graph debugger).
+// Editor-only tooling for CadenceArc: the runtime graph debugger (Arc Debugger and Arc History).
 // The runtime module must never depend on this module.
 public class CadenceArcEditor : ModuleRules
 {

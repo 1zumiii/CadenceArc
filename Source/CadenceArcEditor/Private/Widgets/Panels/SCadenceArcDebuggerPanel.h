@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "CadenceArcDebuggerSettings.h"
+#include "ViewModel/CadenceArcDebuggerSettings.h"
 #include "ViewModel/CadenceArcDebugView.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Input/SComboBox.h"

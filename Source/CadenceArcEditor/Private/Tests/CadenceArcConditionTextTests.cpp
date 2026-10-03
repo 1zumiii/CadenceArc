@@ -14,7 +14,7 @@
 #include "Misc/AutomationTest.h"
 #include "ViewModel/CadenceArcConditionText.h"
 #include "ViewModel/CadenceArcDebugEventText.h"
-#include "Widgets/CadenceArcCanvasDrawing.h"
+#include "Widgets/GraphView/CadenceArcCanvasDrawing.h"
 
 namespace CadenceArc::Editor::Tests
 {

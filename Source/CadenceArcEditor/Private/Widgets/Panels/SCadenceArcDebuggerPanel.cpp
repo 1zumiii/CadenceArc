@@ -1,6 +1,6 @@
 #include "SCadenceArcDebuggerPanel.h"
 
-#include "SCadenceArcGraphView.h"
+#include "Widgets/GraphView/SCadenceArcGraphView.h"
 #include "SCadenceArcRuntimeDetails.h"
 #include "SlateOptMacros.h"
 #include "Editor.h"

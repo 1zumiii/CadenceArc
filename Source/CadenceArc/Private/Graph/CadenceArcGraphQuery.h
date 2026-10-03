@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
-#include "Resolver/CadenceArcResolverEnums.h"
 
 class UCadenceArcGraph;
 struct FCadenceArcInputEvent;
@@ -10,10 +9,20 @@ struct FCadenceArcTransition;
 
 namespace CadenceArc::GraphQuery
 {
-	// 找边的结果。Reason == None 才表示找到唯一候选，此时 TargetActionTag 有效。
+	// 图查询自己的结果，不认识解析器的失败原因；由 Resolver 翻译成 ECadenceArcResolutionReason。
+	enum class EMatchResult : uint8
+	{
+		Found, // 唯一候选，TargetActionTag 有效
+		SourceNodeNotFound, // 当前图里没有源节点
+		NoMatchingInput, // 没有 Tag、阶段和按住时长都对得上的边
+		ConditionNotMet, // 有对得上的边，但上下文或停顿条件全部不满足
+		Ambiguous, // 满足条件的边里，最高优先级有多条
+		TargetNodeNotFound, // 选中的边指向当前图里不存在的节点
+	};
+
 	struct FTransitionMatch
 	{
-		ECadenceArcResolutionReason Reason = ECadenceArcResolutionReason::NoMatchingTransition;
+		EMatchResult Result = EMatchResult::NoMatchingInput;
 		FGameplayTag TargetActionTag;
 	};
 

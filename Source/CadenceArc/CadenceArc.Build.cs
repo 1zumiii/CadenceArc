@@ -1,4 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
 
@@ -14,7 +13,6 @@ public class CadenceArc : ModuleRules
 				"Engine",
 				"Core",
 				"GameplayTags"
-				// ... add other public dependencies that you statically link with here ...
 			]
 		);
 	}

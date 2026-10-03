@@ -98,3 +98,57 @@ struct CADENCEARC_API FCadenceArcHeldDurationRange
 			DurationRange.MaxHeldDurationSecondsExclusive && bHasMaxHeldDuration == DurationRange.bHasMaxHeldDuration;
 	}
 };
+
+// 一次语义输入：哪个 Tag、什么时候、按下还是松手，以及输入那一刻宿主提供的上下文。
+USTRUCT(BlueprintType)
+struct CADENCEARC_API FCadenceArcInputEvent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Input")
+	FGameplayTag InputTag;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Input")
+	double TimestampSeconds = 0.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Input")
+	ECadenceArcInputPhase InputPhase = ECadenceArcInputPhase::Pressed;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Input")
+	double HeldDurationSeconds = 0.0;
+
+	// 输入发生时的事实，随事件一起保存；解析时与宿主的持久上下文取并集。
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="CadenceArc|Input")
+	FGameplayTagContainer ContextTags;
+
+	bool IsValid() const
+	{
+		if (InputTag.IsValid() && IsValidTimestamp() && IsValidHeldDuration() && IsValidInputPhase())
+		{
+			if (InputPhase == ECadenceArcInputPhase::Pressed)
+			{
+				return HeldDurationSeconds == 0.0;
+			}
+			if (InputPhase == ECadenceArcInputPhase::Released)
+			{
+				return HeldDurationSeconds >= 0.0 && TimestampSeconds >= HeldDurationSeconds;
+			}
+		}
+		return false;
+	}
+
+	bool IsValidTimestamp() const
+	{
+		return TimestampSeconds >= 0.0 && FMath::IsFinite(TimestampSeconds);
+	}
+
+	bool IsValidHeldDuration() const
+	{
+		return HeldDurationSeconds >= 0.0 && FMath::IsFinite(HeldDurationSeconds);
+	}
+
+	bool IsValidInputPhase() const
+	{
+		return StaticEnum<ECadenceArcInputPhase>()->IsValidEnumValue(static_cast<int64>(InputPhase));
+	}
+};

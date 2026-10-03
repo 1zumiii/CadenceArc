@@ -1,6 +1,6 @@
 // 紧凑链（ECadenceArcLayoutMode::CompactChains）：把一进一出的简单链收成一个格子，链内成员纵向展开。
 
-#include "CadenceArcLayoutBuild.h"
+#include "Layout/Stages/CadenceArcLayoutBuild.h"
 
 namespace CadenceArc::Editor::LayoutBuild
 {

@@ -5,8 +5,8 @@
 #include "Widgets/Docking/SDockTab.h"
 #include "WorkspaceMenuStructure.h"
 #include "WorkspaceMenuStructureModule.h"
-#include "Widgets/SCadenceArcDebuggerPanel.h"
-#include "Widgets/SCadenceArcHistoryPanel.h"
+#include "Widgets/Panels/SCadenceArcDebuggerPanel.h"
+#include "Widgets/Panels/SCadenceArcHistoryPanel.h"
 
 void FCadenceArcEditorModule::StartupModule()
 {

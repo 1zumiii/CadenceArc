@@ -1,7 +1,7 @@
 // 布局第 4 步：纵坐标。每列保持排好的顺序和最小间距，按连线端口位置上下交替对齐（保序回归）；
 // 然后算出每个通道能用的空闲带，最后把不可达节点放到最后一列。
 
-#include "CadenceArcLayoutBuild.h"
+#include "Layout/Stages/CadenceArcLayoutBuild.h"
 
 namespace CadenceArc::Editor::LayoutBuild
 {

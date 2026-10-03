@@ -1,6 +1,6 @@
 // 布局第 3 步：把可达节点（或整条紧凑链）和长边在中间列的通道做成格子，再按重心法排出每列的上下顺序。
 
-#include "CadenceArcLayoutBuild.h"
+#include "Layout/Stages/CadenceArcLayoutBuild.h"
 
 namespace CadenceArc::Editor::LayoutBuild
 {

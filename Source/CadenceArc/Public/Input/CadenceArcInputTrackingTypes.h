@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "CadenceArcInputTypes.h"
-#include "Resolver/CadenceArcResolverTypes.h"
 #include "CadenceArcInputTrackingTypes.generated.h"
 
 // 结果类别：默认 Rejected，本身就是悲观值，不需要像 HandshakeResult 那样挪位置
