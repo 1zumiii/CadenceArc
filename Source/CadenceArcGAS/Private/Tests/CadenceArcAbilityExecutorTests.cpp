@@ -295,6 +295,35 @@ namespace CadenceArc::Tests::GAS
 		             static_cast<int32>(ECadenceArcHandshakeResult::Success));
 		return !HasAnyErrors();
 	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcGASSharedMontageWindowTest,
+		"CadenceArc.GAS.Executor.SharedMontageWindowKeepsInstancesApart",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcGASSharedMontageWindowTest::RunTest(const FString& Parameters)
+	{
+		// A 和 B 播放同一个蒙太奇资产。B 的实例先进入窗口，A 正在淡出的实例后结束窗口
+		FGASFixture F({UCadenceArcTestAbilityA::StaticClass(), UCadenceArcTestAbilityB::StaticClass()});
+		UAnimSequence* SharedMontage = NewObject<UAnimSequence>();
+
+		F.Arc->PressInput(Input_A);
+		F.Arc->ReleaseInput(Input_A);
+		F.Executor->OpenBufferWindowForAnimation(SharedMontage, 1);
+		F.Arc->PressInput(Input_B);
+		F.Arc->ReleaseInput(Input_B);
+		F.Finish(UCadenceArcTestAbilityA::StaticClass());
+		F.Executor->OpenBufferWindowForAnimation(SharedMontage, 2); // B 的播放实例
+		TestNotEqual(TEXT("A's late close is rejected"),
+		             static_cast<int32>(F.Executor->CloseBufferWindowForAnimation(SharedMontage, 1)),
+		             static_cast<int32>(ECadenceArcHandshakeResult::Success)); // A 的实例迟到的 NotifyEnd
+		TestEqual(TEXT("B's window survives A's late close"), static_cast<int32>(F.Arc->PressInput(Input_A).Status),
+		          static_cast<int32>(ECadenceArcInputStatus::Buffered));
+		TestEqual(TEXT("B's own instance closes its window"),
+		          static_cast<int32>(F.Executor->CloseBufferWindowForAnimation(SharedMontage, 2)),
+		          static_cast<int32>(ECadenceArcHandshakeResult::Success));
+		return !HasAnyErrors();
+	}
 }
 
 #endif

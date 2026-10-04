@@ -49,7 +49,7 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 | 文件 | 覆盖 |
 | --- | --- |
 | `CadenceArcGASTestAbilities.h/.cpp` | 测试用的持续型、瞬发型、激活必然失败和重复资产 Tag 的 Ability |
-| `CadenceArcAbilityExecutorTests.cpp` | Ability 激活和结束与握手回调的对应关系、取消即打断、激活过程中结束、激活失败和匹配异常时拒绝、缓冲消费后激活下一个 Ability（包括同一个 Ability）、不同动画资产的窗口回调使用各自保存的请求编号 |
+| `CadenceArcAbilityExecutorTests.cpp` | Ability 激活和结束与握手回调的对应关系、取消即打断、激活过程中结束、激活失败和匹配异常时拒绝、缓冲消费后激活下一个 Ability（包括同一个 Ability）、窗口回调使用各自保存的请求编号，同一个蒙太奇资产的两次播放按实例 ID 区分 |
 
 窗口测试直接调用执行器接口，没有实际播放蒙太奇，也未覆盖同一动画资产的窗口回调交叠。它验证的是请求编号的记录与使用，不能代替真实蒙太奇通知的集成验证。
 

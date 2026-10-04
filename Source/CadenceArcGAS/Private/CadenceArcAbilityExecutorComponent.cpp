@@ -215,7 +215,8 @@ ECadenceArcHandshakeResult UCadenceArcAbilityExecutorComponent::CloseBufferWindo
 	return Arc ? Arc->CloseBufferWindow(Active.RequestId) : ECadenceArcHandshakeResult::NotInitialized;
 }
 
-ECadenceArcHandshakeResult UCadenceArcAbilityExecutorComponent::OpenBufferWindowForAnimation(const UAnimSequenceBase* Animation)
+ECadenceArcHandshakeResult UCadenceArcAbilityExecutorComponent::OpenBufferWindowForAnimation(
+	const UAnimSequenceBase* Animation, const int32 MontageInstanceId)
 {
 	UCadenceArcComponent* Arc = CadenceArc.Get();
 	if (!Arc)
@@ -224,12 +225,13 @@ ECadenceArcHandshakeResult UCadenceArcAbilityExecutorComponent::OpenBufferWindow
 	}
 	if (Active.RequestId != 0)
 	{
-		WindowRequestIds.Add(Animation, Active.RequestId);
+		WindowRequestIds.Add({Animation, MontageInstanceId}, Active.RequestId);
 	}
 	return Arc->OpenBufferWindow(Active.RequestId);
 }
 
-ECadenceArcHandshakeResult UCadenceArcAbilityExecutorComponent::CloseBufferWindowForAnimation(const UAnimSequenceBase* Animation)
+ECadenceArcHandshakeResult UCadenceArcAbilityExecutorComponent::CloseBufferWindowForAnimation(
+	const UAnimSequenceBase* Animation, const int32 MontageInstanceId)
 {
 	UCadenceArcComponent* Arc = CadenceArc.Get();
 	if (!Arc)
@@ -237,6 +239,6 @@ ECadenceArcHandshakeResult UCadenceArcAbilityExecutorComponent::CloseBufferWindo
 		return ECadenceArcHandshakeResult::NotInitialized;
 	}
 	int64 RequestId = 0;
-	WindowRequestIds.RemoveAndCopyValue(Animation, RequestId);
+	WindowRequestIds.RemoveAndCopyValue({Animation, MontageInstanceId}, RequestId);
 	return Arc->CloseBufferWindow(RequestId);
 }

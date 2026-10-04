@@ -39,10 +39,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category="CadenceArc|GAS")
 	ECadenceArcHandshakeResult CloseBufferWindow();
 
-	// 供蒙太奇通知使用：开始时按动画记下当前请求编号，结束时用同一个编号关闭。
-	// 旧动作的通知迟到时，解析器会按过期回调拒绝，不会关闭新动作的窗口。
-	ECadenceArcHandshakeResult OpenBufferWindowForAnimation(const UAnimSequenceBase* Animation);
-	ECadenceArcHandshakeResult CloseBufferWindowForAnimation(const UAnimSequenceBase* Animation);
+	// 供蒙太奇通知使用：开始时按“动画 + 蒙太奇播放实例”记下当前请求编号，结束时用同一个编号关闭。
+	// 旧动作的通知迟到时，解析器会按过期回调拒绝，不会关闭新动作的窗口；
+	// 两个动作共用同一个蒙太奇资产时，靠播放实例 ID 区分。不在蒙太奇中时传入 INDEX_NONE。
+	ECadenceArcHandshakeResult OpenBufferWindowForAnimation(const UAnimSequenceBase* Animation, int32 MontageInstanceId = INDEX_NONE);
+	ECadenceArcHandshakeResult CloseBufferWindowForAnimation(const UAnimSequenceBase* Animation, int32 MontageInstanceId = INDEX_NONE);
 
 	// 正在执行的请求编号；没有时为 0
 	UFUNCTION(BlueprintPure, Category="CadenceArc|GAS")
@@ -89,7 +90,8 @@ private:
 	bool bEndedDuringActivation = false;
 	bool bEndedCancelled = false;
 
-	TMap<TWeakObjectPtr<const UAnimSequenceBase>, int64> WindowRequestIds;
+	// 键为（动画，蒙太奇播放实例 ID），同一个蒙太奇资产的两次播放各自记录
+	TMap<TPair<TWeakObjectPtr<const UAnimSequenceBase>, int32>, int64> WindowRequestIds;
 
 	void BindCadenceArc();
 	void UnbindCadenceArc();

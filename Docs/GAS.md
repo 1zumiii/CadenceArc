@@ -42,9 +42,9 @@ Ability 在激活过程中就结束时（例如瞬发技能），执行器先报
 
 ## 缓冲窗口
 
-蒙太奇中的 CadenceArc Buffer Window 开始时，执行器以动画资产为键保存当前请求编号，再打开窗口；结束时取出保存的编号关闭窗口。前后两个动作使用不同动画资产时，旧通知迟到的关闭回调仍携带旧编号，解析器会拒绝它，不会关闭新动作的窗口。
+蒙太奇中的 CadenceArc Buffer Window 开始时，执行器以“动画资产 + 蒙太奇播放实例 ID”为键保存当前请求编号，再打开窗口；结束时取出保存的编号关闭窗口。播放实例 ID 来自通知事件引用中的 `FAnimNotifyMontageInstanceContext`。旧通知迟到的关闭回调携带旧编号，解析器会拒绝它，不会关闭新动作的窗口。前后两个动作共用同一个蒙太奇资产（例如同一招循环，或共用一个多 Section 的蒙太奇）时，两次播放的实例 ID 不同，也能各自关闭自己的窗口。
 
-目前的记录不区分同一动画的不同播放实例，也不区分同一动画中的多个通知窗口。如果同一动画的新窗口已开始，旧窗口才结束，新保存的编号可能被旧回调取走，误关当前窗口。因此，应避免同一动画资产的窗口回调交叠；真实蒙太奇播放中的行为尚未验证。
+同一次播放中如果放了两个互相重叠的 Buffer Window，它们的键相同，后开始的窗口会覆盖先开始的记录。一个蒙太奇中的窗口不应重叠。这一机制已有自动化测试覆盖，尚未在真实的蒙太奇播放中验证。
 
 不使用蒙太奇的 Ability，可以在动作开始握手成功后调用执行器的 `OpenBufferWindow` 和 `CloseBufferWindow`。这两个无参接口使用调用时的当前请求编号。如果延迟回调可能在下一招开始后才到达，应预先保存本次请求编号，并调用 CadenceArc 组件上带编号的接口，避免影响新动作。
 
@@ -53,7 +53,9 @@ Ability 在激活过程中就结束时（例如瞬发技能），执行器先报
 ## 注意事项
 
 - **结束时机就是完成时机。** `NotifyActionCompleted` 在 Ability 结束时发出，这也是停顿时长的起点。希望在蒙太奇淡出时就允许衔接下一招，应让 Ability 在淡出时结束，而不是等蒙太奇完全播放完。
-- **取消即打断。** 受击时取消正在执行的 Ability，连招会回到入口动作。
+- **取消即打断。** Ability 被取消时，执行器一律报告 `NotifyActionInterrupted`，连招回到入口动作。GAS 的结束回调只提供 `bWasCancelled`，无法区分“玩家主动取消”（例如闪避）和“被外力打断”（例如受击）。两者在解析器中的行为相同，区别只在 Arc History 的记录名称。
+- **动作 Tag 也参与 GAS 的 Tag 规则。** 动作 Tag 位于 Ability 的 `AssetTags` 中，因此也会被其他 Ability 的 Cancel Abilities With Tag 和 Block Abilities With Tag 匹配。例如，Ability 配置了取消 `Action` 下的所有 Tag 时，激活它会取消带有这些 Tag 的其他 Ability。连招衔接时上一招已经结束，不受影响；但如果另有系统在动作执行中激活这类 Ability，被取消的动作会报告为打断。
+- **攻击输入只走 CadenceArc。** 交给 CadenceArc 的输入，不要再让 Ability System 组件按输入 Tag 或 Input ID 直接激活 Ability（例如 Lyra 的 `AbilityInputTagPressed`），否则同一次按键会激活两次。
 - **一个执行器。** 使用本组件时，不要再让其他系统处理 `OnActionRequested`，否则同一个请求会被执行两次。
 - **联网未验证。** 目前只在单机环境中测试。在客户端上，`TryActivateAbility` 对需要服务器激活的 Ability 的返回值，与实际激活结果可能不一致，联网项目需要自行验证。
 - **插件依赖。** 本插件在描述文件中声明了对 Gameplay Abilities 插件的依赖，启用 CadenceArc 时会一并启用它。
