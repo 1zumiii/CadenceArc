@@ -42,6 +42,15 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 | --- | --- |
 | `CadenceArcInputBinderTests.cpp` | 触发事件到组件调用的映射、输入方式写入、无效和重复条目、重复绑定和解除绑定时取消按下中的输入、只取消已绑定的输入、Pawn Restart 后自动绑定、控制器变化时的取消 |
 
+## GAS 执行器测试
+
+在 `Source/CadenceArcGAS/Private/Tests/` 下。测试在独立的 Game World 中生成 Actor，挂上真实的 Ability System 组件并授予测试 Ability：
+
+| 文件 | 覆盖 |
+| --- | --- |
+| `CadenceArcGASTestAbilities.h/.cpp` | 测试用的持续型、瞬发型、激活必然失败和重复资产 Tag 的 Ability |
+| `CadenceArcAbilityExecutorTests.cpp` | Ability 激活和结束到握手回调的对应、取消即打断、激活过程中结束、激活失败和匹配异常时拒绝、缓冲消费后激活下一个 Ability（包括同一个 Ability）、蒙太奇通知按动画记下请求编号 |
+
 ## 编辑器模块测试
 
 在 `Source/CadenceArcEditor/Private/Tests/` 下：

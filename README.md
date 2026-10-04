@@ -25,6 +25,7 @@ CadenceArc 只决定下一个动作是什么。动作的播放、伤害结算和
 - **动作图**：以 `UDataAsset` 配置，用 Gameplay Tag 标识动作和输入，编辑器内自动校验。
 - **标准接入组件**：`UCadenceArcComponent` 自动处理时间戳、逐帧推进、按键配对、输入方式和请求出口，并提供输入处理结果和按住结束通知。开发者只需配置一次输入方式和上下文来源，并实现执行器回调。
 - **Enhanced Input 适配**：可选模块 `CadenceArcEnhancedInput`。在数据资产中配置 Input Action 对应的输入 Tag 和输入方式，角色被控制后自动绑定，并在失去控制时取消按住中的输入。
+- **GAS 执行器**：可选模块 `CadenceArcGAS`。按动作 Tag 激活对应的 Ability，把 Ability 的激活、结束和取消转为握手回调，缓冲窗口由蒙太奇通知开关。
 - **蓝图支持**：组件、适配组件和上下文接口都可以在蓝图中使用，不写 C++ 也能完成接入。
 - **两阶段握手**：执行器确认开始后，解析器才提交目标节点。执行器拒绝请求后，解析器清空候选请求，回到 `Ready`，保留原来的动作节点。
 - **输入缓冲**：缓冲窗口由执行器开关。缓冲区只有一格，新输入覆盖旧输入，可以设置过期时间。
@@ -43,11 +44,11 @@ CadenceArc 支持 C++ 和蓝图两种接入方式。两种方式使用相同的�
 2. 新建 `CadenceArcGraph` 数据资产，配置入口节点、节点和转移。
 3. 在角色上添加 `UCadenceArcComponent`，在 `Graph` 属性中指定动作图。组件负责时间戳、逐帧推进、按键配对和请求出口。需要方向等事件上下文时，让角色实现 `ICadenceArcInputContextProvider`。
 4. 使用 Enhanced Input 时，新建 `CadenceArcInputActionSet` 资产，为每个 Input Action 配置输入 Tag 和输入方式，再在角色上添加 `UCadenceArcInputBinderComponent` 并指定这个资产。角色被控制后自动绑定，详见[Enhanced Input 适配](Docs/EnhancedInput.md)。需要按住的输入配置 `HoldRelease`，只在部分动作中蓄力的输入配置 `HoldIfAvailable`。
-5. 实现执行器：订阅 `OnActionRequested`，并回调动作的生命周期。
+5. 实现执行器：使用 GAS 时，在角色上添加 `UCadenceArcAbilityExecutorComponent`，让 Ability 的资产 Tag 与动作 Tag 一致，详见[GAS 执行器](Docs/GAS.md)；否则订阅 `OnActionRequested`，并回调动作的生命周期。
 
 ### C++
 
-在模块的 `Build.cs` 中添加依赖 `"CadenceArc"` 和 `"GameplayTags"`；使用 Enhanced Input 适配时，再添加 `"CadenceArcEnhancedInput"`。使用其他输入系统时，在组件的 `InputModes` 中配置输入方式，并在输入绑定中调用 `PressInput` 和 `ReleaseInput`。
+在模块的 `Build.cs` 中添加依赖 `"CadenceArc"` 和 `"GameplayTags"`；使用 Enhanced Input 适配和 GAS 执行器时，分别再添加 `"CadenceArcEnhancedInput"` 和 `"CadenceArcGAS"`。使用其他输入系统时，在组件的 `InputModes` 中配置输入方式，并在输入绑定中调用 `PressInput` 和 `ReleaseInput`。
 
 ```cpp
 // 不使用适配组件时的输入绑定：输入方式来自 InputModes，事件上下文来自角色的 CollectInputContext
@@ -88,6 +89,7 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 | [CadenceArc 组件](Docs/Component.md) | 标准接入方式：组件的职责、接入步骤、接口和时间来源 |
 | [Enhanced Input 适配](Docs/EnhancedInput.md) | 可选模块：用数据资产把 Input Action 绑定到组件，处理失去输入时的清理和触发器设置 |
 | [蓝图接入](Docs/Blueprint.md) | 只用蓝图接入的最小用法：资产、组件、执行器和可选功能 |
+| [GAS 执行器](Docs/GAS.md) | 可选模块：用 Ability 执行动作请求，请求与 Ability 的对应关系、缓冲窗口和注意事项 |
 | [解析器：握手、缓冲与时间](Docs/Resolver.md) | 状态与生命周期、执行器接入、结果类型、缓冲窗口、时间与过期、上下文与停顿 |
 | [按住输入](Docs/HoldInput.md) | 松手档位、蓄力配置、逐帧推进、宿主接入注意事项 |
 | [动作图与校验](Docs/Graph.md) | 图的字段、转移条件与优先级、校验规则 |
@@ -97,21 +99,23 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 
 ## 状态
 
-当前版本为 `0.5.0-alpha`，仍处于实验阶段。稳定版发布前，API 和资产格式都可能调整。
+当前版本为 `0.6.0-alpha`，仍处于实验阶段。稳定版发布前，API 和资产格式都可能调整。
 
 - 已完成：核心解析与握手、输入缓冲与过期、按住与蓄力（Phase 6）、运行时调试器（Phase 7）、转移条件与优先级（Phase 8）。
 - 已完成标准接入组件、Enhanced Input 适配和蓝图接口。Sandbox 中的蓝图示例已在 PIE 中验证。
+- GAS 执行器已有自动化测试，覆盖真实的 Ability System 组件；尚未在 Sandbox 中用真实的 Ability 和蒙太奇实测，联网环境也未验证。
 - 按住相关的 API 尚未在已上线的游戏中使用，易用性可能继续调整。
 - Sandbox 目前使用基于 Timer 的演示执行器，尚未在动画蒙太奇执行器上实测。
 
 路线图：
 
 1. 更多缓冲过期策略，以及可选的连招超时自动回到入口；
-2. 可选的执行适配层，例如 GAS；
+2. 在 Sandbox 中用真实的 Ability 和蒙太奇验证 GAS 执行器；
 3. 输入录制与回放、联网和预测方面的研究。
 
 ## 环境要求
 
 - Unreal Engine 5.7 及对应的 C++ 工具链
 - Enhanced Input 插件（引擎默认启用，本插件已声明依赖）
+- Gameplay Abilities 插件（本插件已声明依赖，启用 CadenceArc 时会一并启用）
 - Git LFS（用于管理 Unreal 二进制资产）

@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 5,
-	"VersionName": "0.5.0-alpha",
+	"Version": 6,
+	"VersionName": "0.6.0-alpha",
 	"FriendlyName": "CadenceArc",
 	"Description": "A tag-driven, execution-agnostic branching action framework for Unreal Engine.",
 	"Category": "Gameplay",
@@ -26,6 +26,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "CadenceArcGAS",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "CadenceArcEditor",
 			"Type": "Editor",
 			"LoadingPhase": "Default"
@@ -34,6 +39,10 @@
 	"Plugins": [
 		{
 			"Name": "EnhancedInput",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayAbilities",
 			"Enabled": true
 		}
 	]

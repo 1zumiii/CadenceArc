@@ -69,4 +69,9 @@
 
 - 插件新增可选的运行时模块 `CadenceArcEnhancedInput`，并在插件描述文件中声明依赖 Enhanced Input 插件。核心模块 `CadenceArc` 的依赖不变。详见[Enhanced Input 适配](EnhancedInput.md)。
 - CadenceArcSandbox 删除了 `CadenceArcInputBinding.h` 中的 `BindComboInputActions` 模板，以及角色上的三个转发函数，改用 `UCadenceArcInputBinderComponent`。参照 Sandbox 复制过这段代码的项目，可以改用适配组件。
-- Sandbox 的 `UCadenceArcInputConfig` 改为继承 `UCadenceArcInputActionSet`。原来的 `ComboInputActions` 字段并入 `InputActions`，`FCadenceArcInputActionConfig` 改为插件中的 `FCadenceArcInputActionBinding`，字段名不变。`Config/DefaultEngine.ini` 中的 `CoreRedirects` 负责读取旧资产，Sandbox 中的两个输入配置资产已经按新类型重新保存。
+- Sandbox 的 `UCadenceArcInputConfig` 改为继承 `UCadenceArcInputActionSet`。原来的 `ComboInputActions` 字段并入 `InputActions`，`FCadenceArcInputActionConfig` 改为插件中的 `FCadenceArcInputActionBinding`，字段名不变。Sandbox 曾在 `Config/DefaultEngine.ini` 中用 `CoreRedirects` 读取旧资产；资产按新类型重新保存后，这些重定向已经删除。复制过旧结构的项目需要自行添加重定向，或重新保存资产。
+
+## GAS 执行器模块（0.6.0）
+
+- 插件新增可选的运行时模块 `CadenceArcGAS`，并在插件描述文件中声明依赖 Gameplay Abilities 插件。启用 CadenceArc 时会一并启用 Gameplay Abilities。核心模块 `CadenceArc` 的依赖不变。详见[GAS 执行器](GAS.md)。
+- 已有的执行器代码不需要修改。改用 `UCadenceArcAbilityExecutorComponent` 时，删除原来订阅 `OnActionRequested` 的执行器，避免同一个请求被执行两次。
