@@ -36,7 +36,7 @@ CadenceArc 只决定下一个动作是什么。动作的播放、伤害结算和
 
 ## 快速开始
 
-CadenceArc 支持 C++ 和蓝图两种接入方式。两种方式使用相同的资产和组件，区别只在执行器写在哪里。
+CadenceArc 支持 C++ 和蓝图两种接入方式，使用相同的资产和组件。执行器可以自行编写，也可以使用插件提供的 GAS 执行器。
 
 共同的步骤：
 
@@ -72,7 +72,7 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 
 ### 蓝图
 
-只使用蓝图时不需要编写 C++，也不需要修改 `Build.cs`。在 `CadenceArc` 组件的 Events 中添加 `On Action Requested`，在事件图中确认请求、打开和关闭缓冲窗口并报告完成：
+只使用蓝图时不需要编写 C++，也不需要修改 `Build.cs`。如果自行实现执行器，在 `CadenceArc` 组件的 Events 中添加 `On Action Requested`，在事件图中确认请求、打开和关闭缓冲窗口并报告完成。使用 GAS 执行器组件时无需再实现这套事件处理。
 
 ![蓝图示例的执行器](Docs/Images/blueprint-sample-executor.png)
 
@@ -80,7 +80,7 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 
 完整步骤见[蓝图接入](Docs/Blueprint.md)。
 
-完整示例见 [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox)：`L_CadenceArcDemo` 使用 C++ 和基于 Timer 的演示执行器，`L_CadenceArcBlueprintDemo` 只使用蓝图。两个示例都包含按住输入和转移条件。
+完整示例见 [CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox)：`L_CadenceArcDemo` 使用 C++ 和基于 Timer 的演示执行器；`L_CadenceArcBlueprintDemo` 复用 C++ 演示角色，在蓝图中实现执行器。两个示例都包含按住输入和转移条件。
 
 ## 文档
 

@@ -2,7 +2,7 @@
 
 [返回首页](../README.md)
 
-`CadenceArcGAS` 是可选的执行器模块，用 Gameplay Ability System 执行 CadenceArc 的动作请求。动作图中的动作 Tag 直接作为 Ability 的资产 Tag，开发者只需授予 Ability，并在蒙太奇中标出缓冲窗口，不需要再写执行器代码。核心模块 `CadenceArc` 不依赖这个模块，也不依赖 GAS。
+`CadenceArcGAS` 是可选的执行器模块，用 Gameplay Ability System 执行 CadenceArc 的动作请求。它通过动作 Tag 查找 Ability，自动报告动作的开始、结束和取消。项目仍需初始化 Ability System 组件、实现并授予 Ability，以及设置缓冲窗口；无需再编写这些生命周期回调的转发代码。核心模块 `CadenceArc` 不依赖这个模块，也不依赖 GAS。
 
 ## 组成
 
@@ -15,11 +15,13 @@
 
 1. 在模块的 `Build.cs` 中添加依赖 `"CadenceArcGAS"`。只使用蓝图时跳过这一步。
 2. 为每个动作创建一个 Ability，在 `AssetTags` 中加入动作图里对应的动作 Tag，例如 `Action.Light1`。
-3. 按项目原有的方式授予这些 Ability，例如在初始化 Ability System 组件时调用 `GiveAbility`。执行器不负责授予。
+3. 按项目原有的方式初始化 Ability System 组件（ASC），并授予这些 Ability，例如调用 `InitAbilityActorInfo` 和 `GiveAbility`。执行器不负责初始化或授予。动作结束时，Ability 必须调用 `EndAbility`，执行器才能报告完成。
 4. 在角色上添加 `UCadenceArcAbilityExecutorComponent`。它在 `BeginPlay` 时绑定同一个 Actor 上的 CadenceArc 组件。
 5. 在 Ability 播放的蒙太奇中添加 CadenceArc Buffer Window 通知状态，覆盖允许输入下一招的区间。
 
-执行器每次收到请求时，都通过 `IAbilitySystemInterface` 或组件查找重新获取 Ability System 组件。因此，Ability System 组件放在 PlayerState 上、被控制后才初始化的项目也可以直接使用。需要指定其他组件时，调用 `SetAbilitySystemComponent`。
+执行器每次收到请求时都会重新获取 ASC。它优先使用 `SetAbilitySystemComponent` 显式指定的组件，否则通过所属 Actor 的 `IAbilitySystemInterface` 或组件查找获取。
+
+ASC 放在 PlayerState 上时，需要让角色实现该接口并返回 PlayerState 上的 ASC，或显式指定。执行器不会自动查找 PlayerState。ASC 可以在角色被控制后再初始化，但必须在处理动作请求前准备好。
 
 ## 请求与 Ability 的对应关系
 
@@ -32,17 +34,19 @@
 | Ability 正常结束 | `NotifyActionCompleted`，同时开始计算停顿时长，并消费缓冲 |
 | Ability 被取消 | `NotifyActionInterrupted`，回到入口动作 |
 
-GAS 的激活条件因此直接成为执行器的拒绝理由。冷却中按下攻击键，请求会被拒绝，连招停在原来的节点，Arc History 中会记录这次拒绝。
+是否允许激活由 GAS 决定。例如，动作请求对应的 Ability 因冷却而无法激活时，执行器会拒绝请求，连招保留在原来的节点。Arc History 会记录请求被拒绝，但不会记录冷却、消耗不足等具体的 GAS 失败原因。
 
 Ability 在激活过程中就结束时（例如瞬发技能），执行器先报告开始，再报告结束，保证握手顺序正确。
 
-完成回调消费缓冲产生的下一个请求，会在上一个 Ability 的结束回调中同步激活下一个 Ability。这时上一个 Ability 的任务、计时器和激活 Tag 都已经清理完毕；下一招是同一个 Ability 时，也能在结束回调中重新激活。
+完成回调消费缓冲并产生下一个请求时，执行器会在当前 Ability 的结束回调中同步尝试激活下一个 Ability。下一招也可以使用同一个 Ability，但仍须满足 GAS 的激活条件。
 
 ## 缓冲窗口
 
-蒙太奇中的 CadenceArc Buffer Window 开始时，执行器记下当前请求的编号，再打开窗口；结束时用同一个编号关闭窗口。上一个动作的蒙太奇如果在下一个动作开始后才结束这个通知，它使用的是旧编号，解析器按过期回调拒绝，不会关闭新动作的窗口。
+蒙太奇中的 CadenceArc Buffer Window 开始时，执行器以动画资产为键保存当前请求编号，再打开窗口；结束时取出保存的编号关闭窗口。前后两个动作使用不同动画资产时，旧通知迟到的关闭回调仍携带旧编号，解析器会拒绝它，不会关闭新动作的窗口。
 
-不使用蒙太奇的 Ability，可以在合适的时机调用执行器的 `OpenBufferWindow` 和 `CloseBufferWindow`。
+目前的记录不区分同一动画的不同播放实例，也不区分同一动画中的多个通知窗口。如果同一动画的新窗口已开始，旧窗口才结束，新保存的编号可能被旧回调取走，误关当前窗口。因此，应避免同一动画资产的窗口回调交叠；真实蒙太奇播放中的行为尚未验证。
+
+不使用蒙太奇的 Ability，可以在动作开始握手成功后调用执行器的 `OpenBufferWindow` 和 `CloseBufferWindow`。这两个无参接口使用调用时的当前请求编号。如果延迟回调可能在下一招开始后才到达，应预先保存本次请求编号，并调用 CadenceArc 组件上带编号的接口，避免影响新动作。
 
 在动画编辑器中预览蒙太奇时，预览角色上没有执行器，这个通知不做任何事。
 

@@ -2,7 +2,7 @@
 
 [返回首页](../README.md)
 
-CadenceArc 可以完全在蓝图中接入，不需要编写 C++。本文给出最小用法：一个角色蓝图、两个数据资产，以及一个用 `Delay` 模拟动作时长的执行器。各接口的完整说明见[CadenceArc 组件](Component.md)和[Enhanced Input 适配](EnhancedInput.md)。
+CadenceArc 可以完全在蓝图中接入，不需要编写 C++。本文从动作图和输入资产的配置开始，在角色蓝图中添加组件，再用 `Delay` 模拟动作时长。各接口的完整说明见[CadenceArc 组件](Component.md)和[Enhanced Input 适配](EnhancedInput.md)。
 
 ## 准备资产
 
@@ -61,11 +61,11 @@ On Action Requested (Request)
 | `On Completed` | `Notify Action Completed` |
 | `On Interrupted` | `Notify Action Interrupted` |
 
-旧蒙太奇的回调可能在下一个请求开始后才到达，例如被下一个动作的蒙太奇打断时触发的 `On Interrupted`。这时 `CurrentRequestId` 已经指向新请求，直接使用会误结束新动作。蓝图难以为每次 `Play Montage` 保存各自的请求编号，正式项目建议用 C++ 处理蒙太奇回调，让每个回调携带自己的请求编号。解析器会拒绝编号过期的回调。
+旧蒙太奇的回调可能在下一个请求开始后才到达，例如被下一个动作的蒙太奇打断时触发的 `On Interrupted`。这时 `CurrentRequestId` 已经指向新请求，直接使用会误结束新动作。上面的共享变量示例不适用于这种情况：无论使用蓝图还是 C++，都需要为每次播放单独保存请求编号，让回调携带所属动作的编号。解析器会拒绝编号过期的回调。若蒙太奇中还有其他通知，应先按通知名称筛选缓冲窗口，再调用开关接口。
 
 ## Sandbox 示例
 
-[CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox) 的 `Maps/L_CadenceArcBlueprintDemo` 是一个完整的蓝图示例。`BP_CadenceArcBlueprintDemo` 继承 C++ 演示角色，沿用其移动、输入配置和方向上下文，并关闭 C++ 执行器（`bAutoExecute = false`），由蓝图事件图处理所有请求。
+[CadenceArcSandbox](https://github.com/1zumiii/CadenceArcSandbox) 的 `Content/Demo/Maps/L_CadenceArcBlueprintDemo` 演示了蓝图执行器的接法。`BP_CadenceArcBlueprintDemo` 继承 C++ 演示角色，沿用其移动、输入配置和方向上下文，并关闭 C++ 执行器（`bAutoExecute = false`），由蓝图事件图处理所有请求。
 
 示例的执行器在确认开始后，向角色自己发送一个真实的 GAS Gameplay Event，事件 Tag 为请求的 `TargetActionTag`，`InstigatorTags` 中带有输入 Tag。没有动画资源时，可以用这种方式检验请求是否能交给 GAS 一侧。缓冲窗口和完成的时序与 C++ 演示执行器相同。
 
@@ -77,13 +77,13 @@ On Action Requested (Request)
 
 *事件监听：`BeginPlay` 时用 `Wait Gameplay Event to Actor` 监听 `CadenceArc.Test.Action` 下的事件，并打印收到的事件；`EndPlay` 时结束监听。*
 
-示例依赖 Gameplay Abilities 插件，这一依赖只属于 Sandbox，CadenceArc 插件本身不依赖 GAS。
+示例使用 Gameplay Abilities 插件发送和监听事件，尚未通过 Ability 执行动作。需要按动作 Tag 激活 Ability 时，可使用 [GAS 执行器](GAS.md)。CadenceArc 插件已声明 Gameplay Abilities 依赖，但核心模块 `CadenceArc` 仍不依赖 GAS。
 
 ## 可选功能
 
-**事件上下文**：在角色蓝图的 Class Settings 中，向 Implemented Interfaces 添加 `CadenceArc Input Context Provider`，然后实现 `Collect Input Context` 函数，返回按键时的上下文 Tag，例如按住“前”时返回 `Context.Dir.Forward`。组件在按下和松开时各调用一次。
+**事件上下文**：在角色蓝图的 Class Settings 中，向 Implemented Interfaces 添加 `CadenceArc Input Context Provider`，然后实现 `Collect Input Context` 函数，返回采集时的上下文 Tag，例如按住“前”时返回 `Context.Dir.Forward`。组件处理按下和手动松开、需要采集上下文时调用该接口；自动释放沿用按下时的上下文。
 
-**持久上下文**：状态变化时调用 `Set Context Tags`，例如起跳时加入 `State.Air`，落地时移除。
+**持久上下文**：状态变化时调用 `Set Context Tags`，传入完整的持久上下文 Tag 集合。例如，起跳时在集合中加入 `State.Air`，落地时移除，再把更新后的集合传给组件。该接口替换整个集合，不是追加单个 Tag。
 
 **蓄力表现**：在 `CadenceArc` 组件的 Events 中添加 `On Hold Stage Changed` 和 `On Hold Ended`，分别播放和清理蓄力特效。
 
