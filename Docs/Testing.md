@@ -14,12 +14,19 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 
 脚本会冷编译编辑器目标，然后运行匹配 `CadenceArc` 筛选条件的测试，Unreal 输出使用英文。确认编译产物与当前源码一致时，可以添加 `-SkipBuild` 跳过构建。
 
+## 测试 Tag
+
+测试使用 `CadenceArc.Automation` 下的 Gameplay Tag。这些 Tag 不在模块加载时注册，而是由 `CadenceArc::Tests::AutomationTag`（`Public/Tests/CadenceArcAutomationTags.h`）在第一次请求时注册为原生 Tag。因此，使用本插件的项目平时打开编辑器时，Tag 选择器中不会出现这些 Tag；它们只存在于运行过测试的进程中，项目中不应使用。
+
+各模块的测试都通过这个函数取得 Tag。编辑器模块的类型是 Editor，引擎不允许在其中定义原生 Tag，所以注册统一放在 Runtime 模块中。GAS 测试 Ability 的资产 Tag 也在测试开始时才写入 CDO，不在构造函数中设置。
+
 ## 运行时测试
 
 在 `Source/CadenceArc/Private/Tests/` 下：
 
 | 文件 | 覆盖 |
 | --- | --- |
+| `CadenceArcAutomationTags.cpp` | 测试 Tag 的延迟注册 |
 | `CadenceArcTestSupport.h/.cpp` | 共用的测试夹具、Tag、断言和时间工具 |
 | `Resolver/CadenceArcResolverContractTests.cpp` | 公开结果、初始化、解析、分支、请求 ID |
 | `Resolver/CadenceArcResolverBufferTests.cpp` | 缓冲窗口、替换和消费 |

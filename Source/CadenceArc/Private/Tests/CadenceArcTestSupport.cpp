@@ -10,19 +10,19 @@
 
 namespace CadenceArc::Tests
 {
-	UE_DEFINE_GAMEPLAY_TAG(Action_Root, "CadenceArc.Automation.Action.Root");
-	UE_DEFINE_GAMEPLAY_TAG(Action_Light01, "CadenceArc.Automation.Action.Light01");
-	UE_DEFINE_GAMEPLAY_TAG(Action_Light02, "CadenceArc.Automation.Action.Light02");
-	UE_DEFINE_GAMEPLAY_TAG(Action_Heavy01, "CadenceArc.Automation.Action.Heavy01");
-	UE_DEFINE_GAMEPLAY_TAG(Action_Heavy02, "CadenceArc.Automation.Action.Heavy02");
-	UE_DEFINE_GAMEPLAY_TAG(Action_Finisher01, "CadenceArc.Automation.Action.Finisher01");
-	UE_DEFINE_GAMEPLAY_TAG(Action_Finisher02, "CadenceArc.Automation.Action.Finisher02");
-	UE_DEFINE_GAMEPLAY_TAG(Action_Finisher03, "CadenceArc.Automation.Action.Finisher03");
-	UE_DEFINE_GAMEPLAY_TAG(Input_Light, "CadenceArc.Automation.Input.Light");
-	UE_DEFINE_GAMEPLAY_TAG(Input_Heavy, "CadenceArc.Automation.Input.Heavy");
-	UE_DEFINE_GAMEPLAY_TAG(Context_Forward, "CadenceArc.Automation.Context.Forward");
-	UE_DEFINE_GAMEPLAY_TAG(Context_Air, "CadenceArc.Automation.Context.Air");
-	UE_DEFINE_GAMEPLAY_TAG(Context_AirJump, "CadenceArc.Automation.Context.Air.Jump");
+	const FAutomationTag Action_Root{TEXT("CadenceArc.Automation.Action.Root")};
+	const FAutomationTag Action_Light01{TEXT("CadenceArc.Automation.Action.Light01")};
+	const FAutomationTag Action_Light02{TEXT("CadenceArc.Automation.Action.Light02")};
+	const FAutomationTag Action_Heavy01{TEXT("CadenceArc.Automation.Action.Heavy01")};
+	const FAutomationTag Action_Heavy02{TEXT("CadenceArc.Automation.Action.Heavy02")};
+	const FAutomationTag Action_Finisher01{TEXT("CadenceArc.Automation.Action.Finisher01")};
+	const FAutomationTag Action_Finisher02{TEXT("CadenceArc.Automation.Action.Finisher02")};
+	const FAutomationTag Action_Finisher03{TEXT("CadenceArc.Automation.Action.Finisher03")};
+	const FAutomationTag Input_Light{TEXT("CadenceArc.Automation.Input.Light")};
+	const FAutomationTag Input_Heavy{TEXT("CadenceArc.Automation.Input.Heavy")};
+	const FAutomationTag Context_Forward{TEXT("CadenceArc.Automation.Context.Forward")};
+	const FAutomationTag Context_Air{TEXT("CadenceArc.Automation.Context.Air")};
+	const FAutomationTag Context_AirJump{TEXT("CadenceArc.Automation.Context.Air.Jump")};
 
 	FCadenceArcNode& AddNode(UCadenceArcGraph* Graph, const FGameplayTag& ActionTag)
 	{

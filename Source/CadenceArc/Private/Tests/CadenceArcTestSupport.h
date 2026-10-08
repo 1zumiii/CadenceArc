@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
-#include "NativeGameplayTags.h"
+#include "Tests/CadenceArcAutomationTags.h"
 #include "Misc/AutomationTest.h"
 #include "Resolver/CadenceArcResolverTypes.h"
 #include <type_traits>
@@ -29,20 +29,20 @@ namespace CadenceArc::Tests
 	inline constexpr double RegressionTimestampSeconds = 0.125;
 
 	// Test tags
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Root);
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Light01);
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Light02);
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Heavy01);
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Heavy02);
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Finisher01);
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Finisher02);
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Finisher03);
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Light);
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Input_Heavy);
+	extern const FAutomationTag Action_Root;
+	extern const FAutomationTag Action_Light01;
+	extern const FAutomationTag Action_Light02;
+	extern const FAutomationTag Action_Heavy01;
+	extern const FAutomationTag Action_Heavy02;
+	extern const FAutomationTag Action_Finisher01;
+	extern const FAutomationTag Action_Finisher02;
+	extern const FAutomationTag Action_Finisher03;
+	extern const FAutomationTag Input_Light;
+	extern const FAutomationTag Input_Heavy;
 	// 转移条件用的上下文 Tag（Phase 8）。Context_AirJump 是 Context_Air 的子 Tag，用来验证层级匹配。
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Context_Forward);
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Context_Air);
-	UE_DECLARE_GAMEPLAY_TAG_EXTERN(Context_AirJump);
+	extern const FAutomationTag Context_Forward;
+	extern const FAutomationTag Context_Air;
+	extern const FAutomationTag Context_AirJump;
 
 	struct FExpectedResolution
 	{

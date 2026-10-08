@@ -8,7 +8,8 @@
 // - 完成时消费缓冲产生的下一个请求，在结束回调中激活下一个 Ability，包括同一个 Ability。
 // - 蒙太奇通知按动画记下请求编号，旧动作迟到的关闭不影响新动作的窗口。
 
-#if WITH_DEV_AUTOMATION_TESTS
+// 测试 Ability 的资产 Tag 通过 EditorGetAssetTags 写入，只在编辑器构建中可用。
+#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
 
 #include "AbilitySystemComponent.h"
 #include "Animation/AnimSequence.h"
@@ -20,9 +21,36 @@
 #include "GameFramework/Actor.h"
 #include "Graph/CadenceArcGraph.h"
 #include "Misc/AutomationTest.h"
+#include "Tests/CadenceArcAutomationTags.h"
 
 namespace CadenceArc::Tests::GAS
 {
+	static const FAutomationTag Action_Root{TEXT("CadenceArc.Automation.GAS.Action.Root")};
+	static const FAutomationTag Action_A{TEXT("CadenceArc.Automation.GAS.Action.A")};
+	static const FAutomationTag Action_B{TEXT("CadenceArc.Automation.GAS.Action.B")};
+	static const FAutomationTag Action_Instant{TEXT("CadenceArc.Automation.GAS.Action.Instant")};
+	static const FAutomationTag Action_Blocked{TEXT("CadenceArc.Automation.GAS.Action.Blocked")};
+	static const FAutomationTag Action_Missing{TEXT("CadenceArc.Automation.GAS.Action.Missing")};
+	static const FAutomationTag Input_A{TEXT("CadenceArc.Automation.GAS.Input.A")};
+	static const FAutomationTag Input_B{TEXT("CadenceArc.Automation.GAS.Input.B")};
+	static const FAutomationTag Input_Instant{TEXT("CadenceArc.Automation.GAS.Input.Instant")};
+	static const FAutomationTag Input_Blocked{TEXT("CadenceArc.Automation.GAS.Input.Blocked")};
+	static const FAutomationTag Input_Missing{TEXT("CadenceArc.Automation.GAS.Input.Missing")};
+
+	// 测试 Ability 的构造函数不设置资产 Tag，测试开始时才写入 CDO，执行器查找 Ability 时读取的正是 CDO 上的 Tag
+	static void ApplyTestAssetTags()
+	{
+		const auto Assign = [](const TSubclassOf<UGameplayAbility>& Class, const FGameplayTag& Tag)
+		{
+			Class->GetDefaultObject<UGameplayAbility>()->EditorGetAssetTags() = FGameplayTagContainer(Tag);
+		};
+		Assign(UCadenceArcTestAbilityA::StaticClass(), Action_A);
+		Assign(UCadenceArcTestAbilityB::StaticClass(), Action_B);
+		Assign(UCadenceArcTestAbilityDuplicateA::StaticClass(), Action_A);
+		Assign(UCadenceArcTestInstantAbility::StaticClass(), Action_Instant);
+		Assign(UCadenceArcTestBlockedAbility::StaticClass(), Action_Blocked);
+	}
+
 	static void AddEdge(FCadenceArcNode& Node, const FGameplayTag& Input, const FGameplayTag& Target)
 	{
 		FCadenceArcTransition& Edge = Node.Transitions.AddDefaulted_GetRef();
@@ -75,6 +103,7 @@ namespace CadenceArc::Tests::GAS
 			AbilitySystem = NewObject<UAbilitySystemComponent>(Actor);
 			AbilitySystem->RegisterComponent();
 			AbilitySystem->InitAbilityActorInfo(Actor, Actor);
+			ApplyTestAssetTags();
 			for (const TSubclassOf<UGameplayAbility>& Ability : Abilities)
 			{
 				AbilitySystem->GiveAbility(FGameplayAbilitySpec(Ability));

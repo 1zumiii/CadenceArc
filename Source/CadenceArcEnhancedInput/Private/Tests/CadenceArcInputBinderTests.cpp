@@ -19,17 +19,17 @@
 #include "Graph/CadenceArcGraph.h"
 #include "InputAction.h"
 #include "Misc/AutomationTest.h"
-#include "NativeGameplayTags.h"
+#include "Tests/CadenceArcAutomationTags.h"
 #include "Resolver/CadenceArcResolver.h"
 
 namespace CadenceArc::Tests::EnhancedInput
 {
-	UE_DEFINE_GAMEPLAY_TAG_STATIC(Action_Root, "CadenceArc.Automation.EnhancedInput.Action.Root");
-	UE_DEFINE_GAMEPLAY_TAG_STATIC(Action_Light, "CadenceArc.Automation.EnhancedInput.Action.Light");
-	UE_DEFINE_GAMEPLAY_TAG_STATIC(Action_Heavy, "CadenceArc.Automation.EnhancedInput.Action.Heavy");
-	UE_DEFINE_GAMEPLAY_TAG_STATIC(Input_Light, "CadenceArc.Automation.EnhancedInput.Input.Light");
-	UE_DEFINE_GAMEPLAY_TAG_STATIC(Input_Heavy, "CadenceArc.Automation.EnhancedInput.Input.Heavy");
-	UE_DEFINE_GAMEPLAY_TAG_STATIC(Input_Other, "CadenceArc.Automation.EnhancedInput.Input.Other");
+	static const FAutomationTag Action_Root{TEXT("CadenceArc.Automation.EnhancedInput.Action.Root")};
+	static const FAutomationTag Action_Light{TEXT("CadenceArc.Automation.EnhancedInput.Action.Light")};
+	static const FAutomationTag Action_Heavy{TEXT("CadenceArc.Automation.EnhancedInput.Action.Heavy")};
+	static const FAutomationTag Input_Light{TEXT("CadenceArc.Automation.EnhancedInput.Input.Light")};
+	static const FAutomationTag Input_Heavy{TEXT("CadenceArc.Automation.EnhancedInput.Input.Heavy")};
+	static const FAutomationTag Input_Other{TEXT("CadenceArc.Automation.EnhancedInput.Input.Other")};
 
 	// Root：Light 按下 -> Light，Heavy 松开 -> Heavy。两个目标都是叶子节点。
 	static UCadenceArcGraph* MakeGraph()

@@ -12,6 +12,7 @@
 
 #include "Graph/CadenceArcGraph.h"
 #include "Misc/AutomationTest.h"
+#include "Tests/CadenceArcAutomationTags.h"
 #include "ViewModel/CadenceArcConditionText.h"
 #include "ViewModel/CadenceArcDebugEventText.h"
 #include "Widgets/GraphView/CadenceArcCanvasDrawing.h"
@@ -20,7 +21,7 @@ namespace CadenceArc::Editor::Tests
 {
 	static FGameplayTag CondTextTag(const TCHAR* Name)
 	{
-		return FGameplayTag::RequestGameplayTag(FName(Name));
+		return CadenceArc::Tests::AutomationTag(Name); // 第一次请求时由 Runtime 模块注册
 	}
 
 	static FGameplayTag CondText_Light01() { return CondTextTag(TEXT("CadenceArc.Automation.Action.Light01")); }

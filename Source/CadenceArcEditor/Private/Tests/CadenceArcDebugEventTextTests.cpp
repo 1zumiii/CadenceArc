@@ -8,13 +8,14 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Misc/AutomationTest.h"
+#include "Tests/CadenceArcAutomationTags.h"
 #include "ViewModel/CadenceArcDebugEventText.h"
 
 namespace CadenceArc::Editor::Tests
 {
 	static FGameplayTag TextTag(const TCHAR* Name)
 	{
-		return FGameplayTag::RequestGameplayTag(FName(Name));
+		return CadenceArc::Tests::AutomationTag(Name); // 第一次请求时由 Runtime 模块注册
 	}
 
 	static FGameplayTag Text_Root() { return TextTag(TEXT("CadenceArc.Automation.Action.Root")); }

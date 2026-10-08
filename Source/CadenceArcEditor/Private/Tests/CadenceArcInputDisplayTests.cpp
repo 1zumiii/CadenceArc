@@ -10,6 +10,7 @@
 
 #include "Graph/CadenceArcGraph.h"
 #include "Misc/AutomationTest.h"
+#include "Tests/CadenceArcAutomationTags.h"
 #include "Resolver/CadenceArcResolver.h"
 #include "ViewModel/CadenceArcInputDisplay.h"
 
@@ -17,7 +18,7 @@ namespace CadenceArc::Editor::Tests
 {
 	static FGameplayTag InputDisplayTag(const TCHAR* Name)
 	{
-		return FGameplayTag::RequestGameplayTag(FName(Name));
+		return CadenceArc::Tests::AutomationTag(Name); // 第一次请求时由 Runtime 模块注册
 	}
 
 	static FGameplayTag Display_Root() { return InputDisplayTag(TEXT("CadenceArc.Automation.Action.Root")); }

@@ -16,14 +16,15 @@
 #include "Graph/CadenceArcGraph.h"
 #include "Layout/CadenceArcGraphLayout.h"
 #include "Misc/AutomationTest.h"
+#include "Tests/CadenceArcAutomationTags.h"
 #include "Resolver/CadenceArcResolver.h"
 
 namespace CadenceArc::Editor::Tests
 {
-	// 与布局测试一样：Editor 模块不能定义原生 Tag，按名字复用 Runtime 注册的测试 Tag，且在运行时再取。
+	// 与布局测试一样：Editor 模块不能定义原生 Tag，测试 Tag 由 Runtime 模块在第一次请求时注册。
 	static FGameplayTag DebugViewTag(const TCHAR* Name)
 	{
-		return FGameplayTag::RequestGameplayTag(FName(Name));
+		return CadenceArc::Tests::AutomationTag(Name); // 第一次请求时由 Runtime 模块注册
 	}
 
 	static FGameplayTag View_Root() { return DebugViewTag(TEXT("CadenceArc.Automation.Action.Root")); }

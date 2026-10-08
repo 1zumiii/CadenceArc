@@ -6,12 +6,13 @@
 
 #include "Graph/CadenceArcGraph.h"
 #include "Misc/AutomationTest.h"
+#include "Tests/CadenceArcAutomationTags.h"
 
 namespace CadenceArc::Editor::Tests
 {
 	FGameplayTag LayoutTag(const TCHAR* Name)
 	{
-		return FGameplayTag::RequestGameplayTag(FName(Name));
+		return CadenceArc::Tests::AutomationTag(Name); // 第一次请求时由 Runtime 模块注册
 	}
 
 	FGameplayTag Layout_A() { return LayoutTag(TEXT("CadenceArc.Automation.Action.Root")); }
