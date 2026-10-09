@@ -364,6 +364,57 @@ namespace CadenceArc::Tests
 		"CadenceArc.Resolver.Recovery.DebugHistoryRecordsRecovery",
 		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCadenceArcRecoveryTickHistoryTest,
+		"CadenceArc.Resolver.Recovery.TimeoutRecordedOnceOnAdvance",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcRecoveryTickHistoryTest::RunTest(const FString& Parameters)
+	{
+		using namespace Recovery;
+		const auto CountResets = [](const UCadenceArcResolver* Resolver)
+		{
+			TArray<FCadenceArcDebugEvent> Events;
+			Resolver->GetDebugHistory().CopyEventsAfter(0, Events);
+			return Events.FilterByPredicate([](const FCadenceArcDebugEvent& Event)
+			{
+				return Event.Operation == ECadenceArcDebugOperation::ComboReset;
+			}).Num();
+		};
+		UCadenceArcResolver* Resolver = AtLight01(*this, ResetGraph());
+		Resolver->AdvanceInputTime(2.75);
+		TestEqual(TEXT("No record before deadline"), CountResets(Resolver), 0);
+		const FResolverSnapshot Before(Resolver);
+		Resolver->AdvanceInputTime(3.0);
+		Before.ExpectUnchanged(*this, Resolver);
+		TestEqual(TEXT("Deadline records without a keypress"), CountResets(Resolver), 1);
+		TArray<FCadenceArcDebugEvent> Events;
+		Resolver->GetDebugHistory().CopyEventsAfter(0, Events);
+		TestEqual(TEXT("Record is timestamped at observation"), Events.Last().TimestampSeconds, 3.0);
+		TestEqual(TEXT("Record includes elapsed pause"), Events.Last().PauseDurationSeconds, 1.0);
+		TestFalse(TEXT("Observation does not invent an input"), Events.Last().InputTag.IsValid());
+		Resolver->AdvanceInputTime(3.25);
+		Resolver->GetEffectiveActionTag(3.5);
+		const auto Request = Resolver->SubmitInput(At(Input_Light, 3.5)).GetActionRequest();
+		Resolver->NotifyActionRejected(Request.RequestId);
+		Resolver->AdvanceInputTime(4.0);
+		TestEqual(TEXT("Ticks, query, input and rejection do not duplicate"), CountResets(Resolver), 1);
+		Run(*this, Resolver, Input_Light, 4.0, 5.0);
+		Resolver->AdvanceInputTime(6.0);
+		TestEqual(TEXT("New completed action may expire again"), CountResets(Resolver), 2);
+
+		UCadenceArcResolver* Disabled = AtLight01(*this, ResetGraph(0.0));
+		Disabled->AdvanceInputTime(100.0);
+		TestEqual(TEXT("Disabled timeout does not record"), CountResets(Disabled), 0);
+		UCadenceArcResolver* Holding = AtLight01(*this, HoldGraph(1.0, false));
+		Holding->BeginInputHold(Token(1), At(Input_Heavy, 2.25));
+		Holding->AdvanceInputTime(3.0);
+		TestEqual(TEXT("Frozen hold does not report timeout"), CountResets(Holding), 0);
+		Holding->CancelInputHold(Token(1));
+		Holding->AdvanceInputTime(3.25);
+		TestEqual(TEXT("After hold cancellation expiry is observable"), CountResets(Holding), 1);
+		return !HasAnyErrors();
+	}
+
 	bool FCadenceArcRecoveryHistoryTest::RunTest(const FString& Parameters)
 	{
 		using namespace Recovery;

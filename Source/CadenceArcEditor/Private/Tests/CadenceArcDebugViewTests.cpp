@@ -233,15 +233,29 @@ namespace CadenceArc::Editor::Tests
 		FCadenceArcDebugView View = BuildReadOnly(*this, TEXT("Before recovery"), *Resolver, Layout);
 		TestEqual(TEXT("Countdown uses last host time"), View.ComboResetRemainingSeconds, 0.75);
 		TestTrue(TEXT("Source remains committed before deadline"), View.EffectiveSourceActionTag == View_Light01());
+		TestEqual(TEXT("Before deadline highlight stays at Light01"), View.DisplayNodeIndex, ViewNode_Light01);
 		Resolver->AdvanceInputTime(3.0);
 		View = BuildReadOnly(*this, TEXT("At recovery"), *Resolver, Layout);
 		TestEqual(TEXT("Deadline has expired"), View.ComboResetRemainingSeconds, 0.0);
 		TestTrue(TEXT("Next resolution starts at entry"), View.EffectiveSourceActionTag == View_Root());
-		ExpectIndices(*this, TEXT("Recovery preserves committed highlight"), View, ViewNode_Light01, INDEX_NONE, INDEX_NONE);
+		ExpectIndices(*this, TEXT("Recovery preserves committed state"), View, ViewNode_Light01, INDEX_NONE, INDEX_NONE);
+		TestEqual(TEXT("Exact deadline moves highlight to Root"), View.DisplayNodeIndex, ViewNode_Root);
+		TestEqual(TEXT("Branch focus starts at Root"), View.NodeDistance[ViewNode_Root], 0);
+		TestEqual(TEXT("Entry successor is reachable again"), View.NodeDistance[ViewNode_Light01], 1);
 		const FCadenceArcSubmitOutcome Outcome = Resolver->SubmitInput(MakeViewPress(View_InputLight(), 3.0));
 		TestTrue(TEXT("Entry request produced"), Outcome.GetCategory() == ECadenceArcResolutionCategory::RequestProduced);
 		View = BuildReadOnly(*this, TEXT("Recovery awaiting start"), *Resolver, Layout);
 		ExpectIndices(*this, TEXT("Candidate uses entry edge"), View, ViewNode_Light01, ViewNode_Light01, ViewEdge_RootLight);
+		TestEqual(TEXT("Awaiting start does not flash back to old node"), View.DisplayNodeIndex, ViewNode_Root);
+		Resolver->NotifyActionStarted(Outcome.GetActionRequest().RequestId);
+		Resolver->AdvanceInputTime(10.0);
+		View = BuildReadOnly(*this, TEXT("Executing after recovery"), *Resolver, Layout);
+		TestEqual(TEXT("Execution highlights accepted target even after time passes"), View.DisplayNodeIndex, ViewNode_Light01);
+		Resolver->NotifyActionCompleted(Outcome.GetActionRequest().RequestId, 10.0);
+		Graph->ComboResetSeconds = 0.0;
+		Resolver->AdvanceInputTime(20.0);
+		View = BuildReadOnly(*this, TEXT("Recovery disabled"), *Resolver, Layout);
+		TestEqual(TEXT("Disabled timeout keeps highlight"), View.DisplayNodeIndex, ViewNode_Light01);
 
 		// 另一实例在到期之前授予 Hold：跨过期限后仍显示冻结来源，不能显示入口倒计时。
 		UCadenceArcGraph* HoldGraph = MakeViewGraph();
@@ -263,6 +277,7 @@ namespace CadenceArc::Editor::Tests
 		View = BuildReadOnly(*this, TEXT("Hold freezes recovery source"), *HoldResolver, BuildGraphLayout(*HoldGraph));
 		TestTrue(TEXT("Hold still shows granted source"), View.EffectiveSourceActionTag == View_Light01());
 		TestEqual(TEXT("Hold suppresses countdown"), View.ComboResetRemainingSeconds, -1.0);
+		TestEqual(TEXT("Hold keeps its frozen source highlighted"), View.DisplayNodeIndex, ViewNode_Light01);
 		return !HasAnyErrors();
 	}
 

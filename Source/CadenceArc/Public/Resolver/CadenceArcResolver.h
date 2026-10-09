@@ -177,6 +177,8 @@ private:
 #if WITH_EDITOR
 	// 调试历史只在编辑器构建中存在；不是 UPROPERTY，只保存值，不参与序列化和 GC
 	FCadenceArcDebugHistory DebugHistory;
+	// 同一执行上下文的超时只报告一次，逐帧推进和后续输入共用去重标记。
+	int64 DebugLastComboResetContextId = -1;
 	double DebugLastHostTime = -1.0; // 最近一次调用方传入的有效时间，供不带时间的记录使用；负数表示还没有
 	// 本次公开调用里最近一次选边用到的上下文和停顿；EndDebugRecord 写进记录后清空
 	bool bDebugHasResolution = false;

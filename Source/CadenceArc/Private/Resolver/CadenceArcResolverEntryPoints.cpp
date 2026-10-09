@@ -316,6 +316,13 @@ FCadenceArcInputAdvanceOutcome UCadenceArcResolver::AdvanceInputTime(const doubl
 #endif
 	FCadenceArcInputAdvanceOutcome Outcome = AdvanceInputTimeImpl(NowSeconds);
 #if WITH_EDITOR
+	// 到期时即报告有效源变为入口；只观察状态，不执行 Reset，也不终结按住资格。
+	if (Outcome.IsAccepted() && GetComboResetRemainingSeconds(NowSeconds) == 0.0)
+	{
+		FCadenceArcInputEvent Observation;
+		Observation.TimestampSeconds = NowSeconds;
+		RecordEntryRecovery(true, CurrentActionTag, Observation, GetPauseDurationSeconds(Observation));
+	}
 	// 宿主每帧都会调用；什么都没发生的推进不记录，否则真正有用的记录几秒就被冲掉
 	if (!Outcome.IsAccepted() || !Outcome.GetStageChanges().IsEmpty() || Outcome.HasRelease())
 	{

@@ -66,7 +66,7 @@ const FCadenceArcGraphLayout& SCadenceArcGraphView::GetLayout() const
 
 void SCadenceArcGraphView::ShowDebugView(const FCadenceArcDebugView& View)
 {
-	CommittedNodeIndex = View.CommittedNodeIndex;
+	DisplayNodeIndex = View.DisplayNodeIndex;
 	Canvas->SetDebugView(View);
 	FollowCommittedNode();
 	ApplyHistoryFocus();
@@ -121,7 +121,7 @@ FVector2D SCadenceArcGraphView::GetVisibleSize() const
 
 void SCadenceArcGraphView::FollowCommittedNode()
 {
-	const int32 NodeIndex = CommittedNodeIndex;
+	const int32 NodeIndex = DisplayNodeIndex;
 	if (NodeIndex != LastFollowedNodeIndex)
 	{
 		LastFollowedNodeIndex = NodeIndex;
@@ -304,7 +304,7 @@ void SCadenceArcGraphView::UpdateOffscreenHints()
 		FVector2D Size = FVector2D::ZeroVector;
 	};
 	TArray<FHint> Hints;
-	const int32 NodeIndex = CommittedNodeIndex;
+	const int32 NodeIndex = DisplayNodeIndex;
 	const FVector2D Visible = GetVisibleSize();
 	if (NodeIndex != INDEX_NONE && Visible.X > 0.0 && Visible.Y > 0.0)
 	{

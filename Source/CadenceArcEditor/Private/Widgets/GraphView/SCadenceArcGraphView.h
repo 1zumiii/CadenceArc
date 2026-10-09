@@ -57,7 +57,7 @@ private:
 
 	// 视口跟随：已提交节点变化时把它滚进视口，其余时间不动用户手动滚到的位置
 	bool bFollowCommittedNode = true;
-	int32 CommittedNodeIndex = INDEX_NONE;
+	int32 DisplayNodeIndex = INDEX_NONE;
 	int32 LastFollowedNodeIndex = INDEX_NONE;
 	int32 PendingFollowFrames = 0; // 换图后滚动区的内容尺寸下一帧才更新，跟随要连续做几帧
 

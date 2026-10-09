@@ -86,22 +86,27 @@ FCadenceArcDebugView BuildDebugView(const UCadenceArcResolver& InResolver, const
 	const double HostTime = InResolver.GetDebugLastHostTime();
 	DebugView.EffectiveSourceActionTag = InResolver.GetEffectiveActionTag(HostTime);
 	DebugView.ComboResetRemainingSeconds = InResolver.GetComboResetRemainingSeconds(HostTime);
+	DebugView.DisplayNodeIndex = DebugView.ResolverState == ECadenceArcResolverState::Ready
+		? FindNodeIndex(InLayout, DebugView.EffectiveSourceActionTag) : DebugView.CommittedNodeIndex;
 
 	if (DebugView.ResolverState == ECadenceArcResolverState::AwaitingStart)
 	{
 		const FCadenceArcActionRequest& Request = DebugView.OutstandingRequest;
+		// 超时后等待 Started 时仍显示入口，避免高亮短暂跳回旧节点。
+		DebugView.EffectiveSourceActionTag = Request.SourceActionTag;
+		DebugView.DisplayNodeIndex = FindNodeIndex(InLayout, Request.SourceActionTag);
 		DebugView.CandidateTargetNodeIndex = FindNodeIndex(InLayout, Request.TargetActionTag);
 		DebugView.CandidateEdgeIndex = FindUniqueCandidateEdge(
 			InLayout, FindNodeIndex(InLayout, Request.SourceActionTag), DebugView.CandidateTargetNodeIndex,
 			Request.InputTag);
 	}
 
-	// 分支聚焦：从已提交节点沿出边做一次广度优先，得到每个节点还要几步才能走到
-	if (DebugView.CommittedNodeIndex != INDEX_NONE)
+	// 分支聚焦与高亮使用同一位置，超时后入口分支立即恢复可见。
+	if (DebugView.DisplayNodeIndex != INDEX_NONE)
 	{
 		DebugView.NodeDistance.Init(INDEX_NONE, InLayout.Nodes.Num());
-		DebugView.NodeDistance[DebugView.CommittedNodeIndex] = 0;
-		TArray<int32> Frontier = {DebugView.CommittedNodeIndex};
+		DebugView.NodeDistance[DebugView.DisplayNodeIndex] = 0;
+		TArray<int32> Frontier = {DebugView.DisplayNodeIndex};
 		for (int32 Head = 0; Head < Frontier.Num(); ++Head)
 		{
 			const int32 Source = Frontier[Head];

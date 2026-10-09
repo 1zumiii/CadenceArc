@@ -67,7 +67,7 @@ SCadenceArcGraphCanvas::EEdgeEmphasis SCadenceArcGraphCanvas::GetEdgeEmphasis(co
 	const bool bPreparatory = DebugView.PreparatoryEdgeProgress.IsValidIndex(EdgeIndex)
 		&& DebugView.PreparatoryEdgeProgress[EdgeIndex] >= 0.f;
 	const int32 Source = Layout.Edges[EdgeIndex].SourceNodeIndex;
-	if (DebugView.CommittedNodeIndex == INDEX_NONE || Source == DebugView.CommittedNodeIndex
+	if (DebugView.DisplayNodeIndex == INDEX_NONE || Source == DebugView.DisplayNodeIndex
 		|| EdgeIndex == DebugView.CandidateEdgeIndex || bPreparatory)
 	{
 		return EEdgeEmphasis::Full;
@@ -278,7 +278,7 @@ void SCadenceArcGraphCanvas::PaintNodes(const FPaintContext& Paint) const
 		const bool bOffPath = GetNodeDistance(NodeIndex) == INDEX_NONE;
 		const float NodeAlpha = bOffPath ? OffPathNodeAlpha : 1.f;
 		FLinearColor BodyFill = Node.bReachable ? BodyColor : UnreachableBodyColor; // 不可达节点调暗
-		FLinearColor HeaderFill = NodeIndex == DebugView.CommittedNodeIndex
+		FLinearColor HeaderFill = NodeIndex == DebugView.DisplayNodeIndex
 			? Paint.Palette.CommittedNodeFill
 			: (GetNodeDistance(NodeIndex) == 1 ? NextStepHeaderColor : (Node.bReachable ? HeaderColor : UnreachableHeaderColor));
 		BodyFill.A *= NodeAlpha;

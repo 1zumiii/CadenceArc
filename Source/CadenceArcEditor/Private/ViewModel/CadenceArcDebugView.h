@@ -13,7 +13,9 @@ struct FCadenceArcDebugView
 	ECadenceArcResolverState ResolverState = ECadenceArcResolverState::Uninitialized;
 	FCadenceArcActionRequest OutstandingRequest;
 	int32 CommittedNodeIndex = INDEX_NONE;
-	// 下一次解析的来源与已提交节点分开；超时恢复不会移动已提交高亮。
+	// 图上的当前位置：Ready 使用有效源，待确认使用请求源，执行中使用已提交节点。
+	int32 DisplayNodeIndex = INDEX_NONE;
+	// 下一次解析的来源与最后提交的节点分开，查询不修改运行时状态。
 	FGameplayTag EffectiveSourceActionTag;
 	double ComboResetRemainingSeconds = -1.0;
 	int32 CandidateTargetNodeIndex = INDEX_NONE;
@@ -25,8 +27,7 @@ struct FCadenceArcDebugView
 	TArray<float> PreparatoryEdgeProgress;
 	int32 CurrentReleaseEdgeIndex = INDEX_NONE;
 	int32 CurrentReleaseTargetNodeIndex = INDEX_NONE;
-	// 与 Layout.Nodes 对齐：从已提交节点出发沿出边的最少步数（已提交节点为 0，循环边照常计入）；
-	// 不按 Reset、不被打断就再也走不到的节点为 INDEX_NONE。没有已提交节点时为空数组。
+	// 与 Layout.Nodes 对齐：从显示位置出发沿出边的最少步数；不可达为 INDEX_NONE。
 	TArray<int32> NodeDistance;
 };
 

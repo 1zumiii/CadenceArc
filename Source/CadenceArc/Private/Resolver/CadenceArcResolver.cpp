@@ -152,6 +152,14 @@ void UCadenceArcResolver::RecordEntryRecovery(const bool bTimeout, const FGamepl
 {
 #if WITH_EDITOR
 	// 这是选边源变更的诊断，不是动作提交；直接写入，避免消耗外层调用的选边记录。
+	if (bTimeout)
+	{
+		if (DebugLastComboResetContextId == CurrentContextId)
+		{
+			return;
+		}
+		DebugLastComboResetContextId = CurrentContextId;
+	}
 	FCadenceArcDebugEvent Record = BeginDebugRecord(bTimeout
 		? ECadenceArcDebugOperation::ComboReset : ECadenceArcDebugOperation::FallbackToEntry);
 	Record.StateAfter = State;
