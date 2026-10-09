@@ -29,6 +29,7 @@ CadenceArc only decides which move comes next. How an action plays, deals damage
 - **Blueprint support**: the component, the input binder, and the context interface all work in Blueprint, so you can integrate without writing C++.
 - **Two-phase handshake**: a resolved request commits only when the executor confirms it started; a rejection leaves state unchanged.
 - **Input buffering**: an executor-controlled window with a single slot (last input wins) and optional expiry.
+- **Combo recovery**: optionally restart from the entry after an idle timeout, or fall back to the entry when the current node has no matching transition. Both are off by default, and validation reports settings that conflict with pause conditions.
 - **Hold and charge**: different moves for different hold durations, with charge stages, charge protection, and automatic release.
 - **Transition conditions**: the same input can branch on context tags (per input or persistent) and on the pause since the last action, with explicit priorities. Ties are reported, never guessed.
 - **Explicit time**: the caller supplies every timestamp; the resolver never reads a clock, so results are deterministic.
@@ -111,7 +112,7 @@ CadenceArc is `0.6.0-alpha` and experimental; the API and asset format may chang
 
 Roadmap:
 
-1. More expiry policies, and an optional combo timeout that returns to the entry.
+1. More expiry policies.
 2. Verify the GAS executor in the Sandbox with real abilities and montages.
 3. Input recording, replay, networking, and prediction research.
 

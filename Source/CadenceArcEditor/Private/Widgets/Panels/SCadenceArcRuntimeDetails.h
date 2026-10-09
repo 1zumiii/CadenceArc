@@ -31,6 +31,7 @@ private:
 	FCadenceArcHoldSnapshot DisplayedHoldSnapshot;
 
 	FText GetStateText() const;
+	FText GetRecoveryText() const;
 	FText GetRequestText() const;
 	FText GetWindowText() const;
 	FText GetBufferedInputText() const;

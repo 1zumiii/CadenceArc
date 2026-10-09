@@ -42,7 +42,13 @@ FCadenceArcHoldOutcome UCadenceArcResolver::BeginInputHoldImpl(
 	}
 
 	// 以下全部在局部变量上完成，任何一步失败都不能动到已有的槽
-	const FCadenceArcNode* SourceNode = Graph->FindAction(CurrentActionTag);
+	FGameplayTag Source = GetFreshInputSourceActionTag(PressEvent.TimestampSeconds);
+	const double Pause = GetPauseDurationSeconds(PressEvent);
+	if (Source != CurrentActionTag)
+	{
+		RecordEntryRecovery(true, CurrentActionTag, PressEvent, Pause);
+	}
+	const FCadenceArcNode* SourceNode = Graph->FindAction(Source);
 	if (!SourceNode)
 	{
 		Outcome.SetRejected(ECadenceArcResolutionReason::CurrentNodeNotFound);
@@ -56,6 +62,19 @@ FCadenceArcHoldOutcome UCadenceArcResolver::BeginInputHoldImpl(
 	// 该 Tag 一条 Released 边都没有：无论按多久，松手时必然无匹配，当场拒绝
 	TArray<FCadenceArcTransition> ReleasedEdges;
 	SourceNode->CollectTransitions(PressEvent.InputTag, ECadenceArcInputPhase::Released, ReleasedEdges);
+	if (ReleasedEdges.IsEmpty() && Graph->bFallbackToEntryOnNoMatch && Source != Graph->EntryActionTag)
+	{
+		RecordEntryRecovery(false, Source, PressEvent, Pause);
+		Source = Graph->EntryActionTag;
+		SourceNode = Graph->FindAction(Source);
+		if (!SourceNode || !SourceNode->IsValidTransition())
+		{
+			Outcome.SetRejected(SourceNode ? ECadenceArcResolutionReason::InvalidGraphConfiguration
+				: ECadenceArcResolutionReason::CurrentNodeNotFound);
+			return Outcome;
+		}
+		SourceNode->CollectTransitions(PressEvent.InputTag, ECadenceArcInputPhase::Released, ReleasedEdges);
+	}
 	if (ReleasedEdges.IsEmpty())
 	{
 		Outcome.SetRejected(ECadenceArcResolutionReason::NoMatchingTransition);
@@ -92,7 +111,8 @@ FCadenceArcHoldOutcome UCadenceArcResolver::BeginInputHoldImpl(
 	NewSlot.InputEvent = PressEvent;
 	NewSlot.bFromHold = true;
 	NewSlot.LastObservedTimestampSeconds = PressEvent.TimestampSeconds;
-	NewSlot.SourceActionTag = CurrentActionTag;
+	NewSlot.SourceActionTag = Source;
+	NewSlot.GrantedActionTag = CurrentActionTag;
 	NewSlot.GrantedContextId = CurrentContextId;
 	NewSlot.bHasChargeConfig = ChargeConfig != nullptr;
 	if (ChargeConfig)
@@ -151,7 +171,7 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::ConsumeHoldRelease(
 	Outcome.SetRejected(ECadenceArcResolutionReason::NotInitialized); // 悲观默认
 
 	// 资格绑定授予时的已提交节点与上下文编号：回到同名节点的另一次执行也不能复用
-	if (HoldSlot.SourceActionTag != CurrentActionTag || HoldSlot.GrantedContextId != CurrentContextId)
+	if (HoldSlot.GrantedActionTag != CurrentActionTag || HoldSlot.GrantedContextId != CurrentContextId)
 	{
 		Outcome.SetRejected(ECadenceArcResolutionReason::NoMatchingHold);
 		return Outcome;
@@ -177,7 +197,7 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::ConsumeHoldRelease(
 	                                   &HoldSlot.ReleasedEdges);
 	if (Match.Reason == ECadenceArcResolutionReason::None)
 	{
-		Outcome.SetRequestProduced(CommitRequest(ReleasedEvent.InputTag, Match.TargetActionTag));
+		Outcome.SetRequestProduced(CommitRequest(ReleasedEvent.InputTag, Match.TargetActionTag, Match.SourceActionTag));
 	}
 	else
 	{

@@ -8,7 +8,7 @@
 
 | 类型 | 字段 |
 | --- | --- |
-| `UCadenceArcGraph` | `EntryActionTag`、`Nodes`、`MaxBufferedInputAgeSeconds` |
+| `UCadenceArcGraph` | `EntryActionTag`、`Nodes`、`MaxBufferedInputAgeSeconds`，以及连招恢复字段 `ComboResetSeconds` 和 `bFallbackToEntryOnNoMatch` |
 | `FCadenceArcNode` | `ActionTag`、`HoldChargeConfigs`、`Transitions` |
 | `FCadenceArcTransition` | `InputTag`、`TargetActionTag`、`InputPhase`、`bUseDurationRange` 和 `DurationRange`，以及条件字段 `Priority`、`RequiredContextTags`、`BlockedContextTags`、`bUsePauseRange` 和 `PauseRange` |
 
@@ -46,16 +46,30 @@ Tag 按层级匹配：上下文包含 `State.Air.Jump` 时，满足 `Required = 
 
 在空中按住“前”并按 Heavy 时，下砸的优先级最高。在地面未按方向键时，若在上一个动作完成后 0.5 秒按 Heavy，会选择停顿重击；若只间隔 0.1 秒，则选择普通重击。
 
+## 连招恢复
+
+两个图级字段控制连招什么时候回到入口，默认都关闭，已有资产的行为不变。
+
+| 字段 | 默认 | 含义 |
+| --- | --- | --- |
+| `ComboResetSeconds` | 0（关闭） | 上一个动作完成后，停顿达到这个秒数时，下一次输入从入口选边 |
+| `bFallbackToEntryOnNoMatch` | 关 | 当前节点没有匹配这个输入的转移时，改从入口选边 |
+
+例如，`ComboResetSeconds = 1.0` 时，Light01 完成后 1 秒内按 Light 接 Light02，超过 1 秒再按 Light 则重新从 Light01 开始。开启回退后，打到没有后续的终结技时，再按 Light 也会重新出 Light01，而不是没有反应。
+
+两者都只改变“从哪个节点选边”，不会提前改变已提交的节点。运行时规则见[解析器](Resolver.md#连招恢复)。
+
 ## 校验
 
 编辑器资产校验（`IsDataValid`）和 `UCadenceArcResolver::Initialize` 共用 `UCadenceArcGraph::ValidateGraph`。校验包含以下错误：
 
 - 空图，无效或重复的节点 Tag；
 - 无效或缺失的入口节点；
-- 无效的缓冲时长上限；
+- 无效的缓冲时长上限或连招重置时间（负数或非有限值）；
 - 无效的转移 Tag，不存在的目标节点；
 - 无效的阶段、按住时长区间或停顿区间；
 - 同一条边的 `RequiredContextTags` 和 `BlockedContextTags` 冲突，这条边永远不可能满足；
+- 启用 `ComboResetSeconds` 时，非入口节点上某条边的停顿区间下限不小于重置时间。停顿到达下限之前连招已经重置，这条边永远不可能满足；
 - 重叠的转移；
 - 无效的蓄力配置。
 
@@ -68,7 +82,9 @@ Tag 按层级匹配：上下文包含 `State.Air.Jump` 时，满足 `Required = 
 
 校验逐对检查转移，即使还有更高优先级的转移，也会报告这两条边的重叠错误。报错信息会提示提高其中一条边的优先级，或让两条边的条件互斥。例如，突进和普通重击如果都设为优先级 0，校验会报告重叠；提高突进的优先级，或为普通重击设置 `Blocked = Dir.Forward`，都可以消除这项冲突。
 
-校验还会报告从入口不可达的节点。这项检查只分析图的连接关系，不推断上下文条件是否会在游戏中出现。不可达节点以警告形式写入初始化日志，不阻止初始化。
+校验还会报告从入口不可达的节点。这项检查只分析图的连接关系，不推断上下文条件是否会在游戏中出现。不可达节点以警告形式写入初始化日志，不阻止初始化。开启 `bFallbackToEntryOnNoMatch` 不会让断开的节点变得可达；没有出边的终止节点本来就不报警告。
+
+启用 `ComboResetSeconds` 后，非入口节点上的停顿区间上限超过重置时间或不设上限时，校验报告警告，并在提示中写明实际生效的区间 `[下限, 重置时间)`。例如，重置时间为 1.0 时，区间 `[0.5, 1.2)` 中的 `[1.0, 1.2)` 永远走不到。校验不修改资产，也不在运行时截断区间；资产中填写的区间保持原样。入口节点上的边不做这项检查，因为在入口重置到入口不会改变任何东西。
 
 校验不修改资产，诊断按数组顺序输出。初始化检查通过后才替换状态，失败时保留原配置。返回原因包括 `InvalidGraph`、`InvalidEntryActionTag`、`EntryNodeNotFound` 和 `UnexpectedState`。
 

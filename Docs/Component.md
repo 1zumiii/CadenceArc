@@ -141,6 +141,7 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 | 输出 | `OnHoldStageChanged` | 按住资格进入蓄力或蓄满，携带输入 Tag 和阈值时间 |
 | 输出 | `OnHoldEnded` | 按住资格结束，携带输入 Tag 和结束原因 |
 | 查询 | `IsInitialized()` / `GetState()` / `GetCurrentActionTag()` | 常用状态，供 UI 等系统直接读取 |
+| 查询 | `GetEffectiveActionTag()` / `GetComboResetRemainingSeconds()` | 下一次输入的实际选边源和距连招重置的剩余秒数，按组件的时间来源计算，规则见[解析器](Resolver.md#连招恢复) |
 | 查询 | `GetResolver()` | 底层解析器，用于调试和高级查询；通过它直接修改解析器会绕过组件的通知 |
 
 三个输出事件都有对应的 C++ 多播委托（`OnActionRequestedNative`、`OnHoldStageChangedNative` 和 `OnHoldEndedNative`），与蓝图委托同时发出，便于 C++ 代码绑定 lambda。

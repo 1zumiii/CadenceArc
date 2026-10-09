@@ -41,6 +41,7 @@ private:
 		bool bFromHold = false; // 区分按住释放产生的事件与直接提交的输入
 		double LastObservedTimestampSeconds = 0.0;
 		FGameplayTag SourceActionTag;
+		FGameplayTag GrantedActionTag; // 授予时的已提交节点；选边源可以因回退而是入口
 		int64 GrantedContextId = 0; // 授予资格时记下的 CurrentContextId
 		bool bHasChargeConfig = false;
 		FCadenceArcHoldChargeConfig ChargeConfig;
@@ -50,7 +51,8 @@ private:
 	};
 
 	FCadenceArcActionRequest CommitRequest(
-		const FGameplayTag& InputTag, const FGameplayTag& TargetActionTag
+		const FGameplayTag& InputTag, const FGameplayTag& TargetActionTag,
+		const FGameplayTag& SourceActionTag
 	);
 
 	UPROPERTY(Transient)
@@ -67,6 +69,7 @@ private:
 	{
 		ECadenceArcResolutionReason Reason = ECadenceArcResolutionReason::NoMatchingTransition;
 		FGameplayTag TargetActionTag;
+		FGameplayTag SourceActionTag;
 	};
 
 	FGameplayTagContainer MakeResolutionContext(const FCadenceArcInputEvent& Event) const;
@@ -77,6 +80,11 @@ private:
 		const TArray<FCadenceArcTransition>* EdgesOverride = nullptr);
 	double GetPauseDurationSeconds(const FCadenceArcInputEvent& Event) const;
 	void RecordCompletionTimestamp(double CompletionTimestampSeconds);
+	FGameplayTag GetFreshInputSourceActionTag(double NowSeconds) const;
+	FEdgeMatch MatchInputWithFallback(const FGameplayTag& SourceActionTag,
+		const FCadenceArcInputEvent& Event, double PauseDurationSeconds);
+	void RecordEntryRecovery(bool bTimeout, const FGameplayTag& SourceActionTag,
+		const FCadenceArcInputEvent& Event, double PauseDurationSeconds);
 
 	UPROPERTY(Transient)
 	FGameplayTag CurrentActionTag;
@@ -175,6 +183,7 @@ private:
 	FGameplayTagContainer DebugResolutionContext;
 	double DebugResolutionPause = -1.0;
 	FCadenceArcInputEvent DebugResolutionEvent; // 完成时消费缓冲的那次调用没有输入参数，靠它补上输入
+	FGameplayTag DebugResolutionSource;
 	FCadenceArcDebugEvent BeginDebugRecord(ECadenceArcDebugOperation Operation) const;
 	void EndDebugRecord(FCadenceArcDebugEvent& Record);
 	void NoteDebugHostTime(double Seconds);
@@ -203,6 +212,17 @@ public:
 	/// Getters
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
 	FGameplayTag GetCurrentActionTag() const { return CurrentActionTag; }
+
+	// 只查询，不提交节点。到期后新输入从入口选边；已有按住资格仍使用冻结的源节点。
+	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
+	FGameplayTag GetEffectiveActionTag(double NowSeconds) const;
+
+	// -1 表示不计时（关闭、未完成、执行中或正在按住）；0 表示下一次新输入将从入口解析。
+	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
+	double GetComboResetRemainingSeconds(double NowSeconds) const;
+
+	// 输入适配层用同一套源节点规则选择 HoldIfAvailable，不预测未来松手条件。
+	bool HasReleasedTransitionForInput(const FGameplayTag& InputTag, double NowSeconds) const;
 
 	UFUNCTION(BlueprintPure, Category="CadenceArc|Resolver")
 	ECadenceArcResolverState GetState() const { return State; }

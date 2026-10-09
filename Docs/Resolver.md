@@ -42,7 +42,7 @@
 
 ### 请求内容
 
-`FCadenceArcActionRequest` 包含 `RequestId`、`InputTag`（选中转移的输入）、`SourceActionTag`（解析时所在的节点）和 `TargetActionTag`（候选动作）。
+`FCadenceArcActionRequest` 包含 `RequestId`、`InputTag`（选中转移的输入）、`SourceActionTag`（实际选边的源节点，通常是解析时所在的节点，发生连招恢复时为入口）和 `TargetActionTag`（候选动作）。
 
 ## 执行器接入
 
@@ -128,6 +128,44 @@ FCadenceArcActionCompletionOutcome NotifyActionCompleted(int64 RequestId, double
 缓冲时长等于上限时仍然有效。对于普通按下输入的缓冲，`InvalidCompletionTime` 和 `Expired` 都属于握手成功后的消费结果：旧动作结束，请求、窗口和缓冲被清空，已提交的节点保留。
 
 存在待松手资格或松手缓冲时，无效完成时间会直接拒绝握手，返回 `ECadenceArcHandshakeResult::InvalidCompletionTime`，状态保持不变。待松手资格在正常完成后仍然保留，消费结果为 `NoAction / WaitingForRelease`。
+
+## 连招恢复
+
+图上的 `ComboResetSeconds` 和 `bFallbackToEntryOnNoMatch` 决定连招何时回到入口，字段说明见[动作图](Graph.md#连招恢复)。两者都只改变一次输入的选边源，不提前修改已提交的节点。
+
+### 超时重置
+
+`Ready` 状态下收到新输入时，如果距上次成功完成回调的停顿达到 `ComboResetSeconds`，这次输入从入口选边。停顿正好等于重置时间也算到期。以下情况不会重置：
+
+- `ComboResetSeconds` 为 0；
+- 还没有停顿起点，例如刚初始化、`Reset`、取消或打断之后；
+- 动作执行中（`AwaitingStart` 或 `Executing`），不计时；
+- 缓冲的输入。它在完成回调中消费，停顿为 0。
+
+重置是惰性的：只在下一次输入时判断，到期本身不改变任何状态。重置产生的请求，`SourceActionTag` 为入口，执行器确认开始后才提交目标节点。在那之前，`GetCurrentActionTag` 仍返回旧节点；执行器拒绝请求时，已提交节点也保持不变。
+
+按住输入在 `BeginInputHold` 时判断是否重置，并把判断结果和转移副本一起冻结在资格中。按下时未到期、松手时才超过重置时间的按住，仍从按下时的节点解析。
+
+### 回退入口
+
+开启 `bFallbackToEntryOnNoMatch` 后，非入口节点上的选边结果为 `NoMatchingTransition` 时，同一次输入改从入口再选一次边。回退只发生一次，只针对 `NoMatchingTransition`：`ConditionNotMet`、`AmbiguousTransition` 和图配置错误都不回退，避免借入口的分支绕过条件。
+
+回退适用于三处：`Ready` 时直接提交的输入、完成回调中消费的缓冲，以及按住申请。按住申请时，如果当前节点没有这个输入的 `Released` 转移，就使用入口节点的 `Released` 转移。CadenceArc 组件的 `HoldIfAvailable` 按同一规则判断是否申请按住。
+
+### 查询
+
+以下查询只读取状态，不推进时间，也不提交节点：
+
+| 接口 | 返回 |
+| --- | --- |
+| `GetEffectiveActionTag(Now)` | 下一次新输入实际的选边源。到期后为入口；存在待松手资格时，为资格冻结的源节点 |
+| `GetComboResetRemainingSeconds(Now)` | 距重置的剩余秒数；0 表示已到期；-1 表示当前不计时（未启用、没有停顿起点、动作执行中或正在按住） |
+
+CadenceArc 组件提供同名的无参版本，使用组件的时间来源。
+
+### 与停顿条件的关系
+
+停顿条件和超时重置使用同一个停顿起点。重置时间以图上的全局值为准，运行时不会根据停顿区间推迟重置，也不会截断区间；冲突由校验报告，规则见[动作图](Graph.md#校验)。
 
 ## 转移条件
 

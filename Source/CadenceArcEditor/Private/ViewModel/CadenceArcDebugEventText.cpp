@@ -24,6 +24,11 @@ namespace
 	}
 
 	// "Light P" / "Heavy R"
+	FGameplayTag ResolutionSource(const FCadenceArcDebugEvent& Event)
+	{
+		return Event.ResolutionSourceActionTag.IsValid() ? Event.ResolutionSourceActionTag : Event.CommittedBefore;
+	}
+
 	FString InputName(const FCadenceArcDebugEvent& Event)
 	{
 		return FString::Printf(TEXT("%s %s"), *ShortName(Event.InputTag),
@@ -58,7 +63,7 @@ namespace
 	TArray<const FCadenceArcTransition*> CandidateEdges(const FCadenceArcDebugEvent& Event, const UCadenceArcGraph* Graph)
 	{
 		TArray<const FCadenceArcTransition*> Candidates;
-		const FCadenceArcNode* Node = Graph ? Graph->FindAction(Event.CommittedBefore) : nullptr;
+		const FCadenceArcNode* Node = Graph ? Graph->FindAction(ResolutionSource(Event)) : nullptr;
 		if (!Node)
 		{
 			return Candidates;
@@ -96,7 +101,7 @@ namespace
 				Lines.Add(FString::Printf(TEXT("%s %s"), *ShortName(Edge->TargetActionTag), *FString::Join(Unmet, TEXT(", "))));
 			}
 		}
-		return FString::Printf(TEXT("No edge for %s at %s fits%s. %s"), *InputName(Event), *ShortName(Event.CommittedBefore),
+		return FString::Printf(TEXT("No edge for %s at %s fits%s. %s"), *InputName(Event), *ShortName(ResolutionSource(Event)),
 		                       Lines.IsEmpty() ? TEXT(" the conditions") : *(TEXT(": ") + FString::Join(Lines, TEXT("; "))),
 		                       *ContextSummary(Event));
 	}
@@ -126,11 +131,11 @@ namespace
 		if (Tied.Num() < 2)
 		{
 			return FString::Printf(TEXT("Several edges tie at the top priority for %s at %s. %s"), *InputName(Event),
-			                       *ShortName(Event.CommittedBefore), *ContextSummary(Event));
+			                       *ShortName(ResolutionSource(Event)), *ContextSummary(Event));
 		}
 		return FString::Printf(TEXT("%s tie at priority %d for %s at %s; raise one priority or make their conditions exclusive. %s"),
 		                       *FString::Join(Tied, TEXT(" and ")), TopPriority, *InputName(Event),
-		                       *ShortName(Event.CommittedBefore), *ContextSummary(Event));
+		                       *ShortName(ResolutionSource(Event)), *ContextSummary(Event));
 	}
 
 	// 选边时的上下文，接在输入名后面："Heavy P [Forward, pause 0.42s]"。
@@ -174,7 +179,7 @@ namespace
 		case ECadenceArcResolutionReason::CurrentNodeNotFound: Text = TEXT("Current node is missing from the graph"); break;
 		case ECadenceArcResolutionReason::NoMatchingTransition:
 			Text = FString::Printf(TEXT("No transition for %s from %s"), *InputName(Event),
-			                       *ShortName(Event.CommittedBefore));
+			                       *ShortName(ResolutionSource(Event)));
 			break;
 		case ECadenceArcResolutionReason::TargetNodeNotFound: Text = TEXT("Target node is missing from the graph"); break;
 		case ECadenceArcResolutionReason::NoBufferedInput: Text = TEXT("No buffered input"); break;
@@ -246,6 +251,7 @@ FCadenceArcDebugEventText FormatDebugEvent(const FCadenceArcDebugEvent& Event, c
 		                            Event.TimestampSeconds);
 	}
 	const FString Committed = ShortName(Event.CommittedBefore);
+	const FString Source = ShortName(ResolutionSource(Event));
 	const FString RequestId = FString::Printf(TEXT("#%lld"), static_cast<long long>(Event.CallerRequestId));
 	const FString Note = ResolutionNote(Event, Graph); // 选边时的上下文，没有选过边时为空
 	// 完成时消费缓冲：解析过的缓冲输入有名字；过期等没走到选边的仍叫 "input"
@@ -253,6 +259,16 @@ FCadenceArcDebugEventText FormatDebugEvent(const FCadenceArcDebugEvent& Event, c
 
 	switch (Event.Operation)
 	{
+	case ECadenceArcDebugOperation::ComboReset:
+		Text.Summary = FString::Printf(
+			TEXT("Combo reset: pause %.2fs >= %.2fs, source %s → entry %s (committed unchanged)"),
+			Event.PauseDurationSeconds, Event.ComboResetSeconds,
+			*ShortName(Event.RecoverySourceActionTag), *ShortName(Event.RecoveryTargetActionTag));
+		break;
+	case ECadenceArcDebugOperation::FallbackToEntry:
+		Text.Summary = FString::Printf(TEXT("Fallback to entry: source %s → %s (committed unchanged)"),
+			*ShortName(Event.RecoverySourceActionTag), *ShortName(Event.RecoveryTargetActionTag));
+		break;
 	case ECadenceArcDebugOperation::Initialize:
 		Text.Summary = Event.bFailed ? TEXT("Initialize failed")
 		                             : FString::Printf(TEXT("Initialized at %s"), *ShortName(Event.CommittedAfter));
@@ -272,8 +288,8 @@ FCadenceArcDebugEventText FormatDebugEvent(const FCadenceArcDebugEvent& Event, c
 		break;
 	case ECadenceArcDebugOperation::SubmitInput:
 		Text.Summary = Event.bFailed
-			? FString::Printf(TEXT("%s%s ignored at %s"), *InputName(Event), *Note, *Committed)
-			: FString::Printf(TEXT("%s%s at %s%s"), *InputName(Event), *Note, *Committed, *ResolutionTail(Event));
+			? FString::Printf(TEXT("%s%s ignored at %s"), *InputName(Event), *Note, *Source)
+			: FString::Printf(TEXT("%s%s at %s%s"), *InputName(Event), *Note, *Source, *ResolutionTail(Event));
 		if (Event.bFailed)
 		{
 			Text.FailureDetail = DescribeReason(Event, Graph);
@@ -281,8 +297,8 @@ FCadenceArcDebugEventText FormatDebugEvent(const FCadenceArcDebugEvent& Event, c
 		break;
 	case ECadenceArcDebugOperation::BeginHold:
 		Text.Summary = Event.bFailed
-			? FString::Printf(TEXT("%s hold refused at %s"), *ShortName(Event.InputTag), *Committed)
-			: FString::Printf(TEXT("%s held at %s"), *ShortName(Event.InputTag), *Committed);
+			? FString::Printf(TEXT("%s hold refused at %s"), *ShortName(Event.InputTag), *Source)
+			: FString::Printf(TEXT("%s held at %s"), *ShortName(Event.InputTag), *Source);
 		if (Event.bFailed)
 		{
 			Text.FailureDetail = DescribeReason(Event, Graph);
@@ -399,6 +415,13 @@ FCadenceArcHistoryFocus MakeHistoryFocus(const FCadenceArcDebugEvent& Event)
 {
 	FCadenceArcHistoryFocus Focus;
 	Focus.Sequence = Event.Sequence;
+	// 恢复是来源选择，不是图中的转移边；只聚焦入口，不伪造一条已提交路径。
+	if (Event.Operation == ECadenceArcDebugOperation::ComboReset
+		|| Event.Operation == ECadenceArcDebugOperation::FallbackToEntry)
+	{
+		Focus.SourceNode = Event.RecoveryTargetActionTag;
+		return Focus;
+	}
 	const auto FocusRequest = [&Focus](const FCadenceArcActionRequest& Request)
 	{
 		Focus.SourceNode = Request.SourceActionTag;
@@ -421,7 +444,7 @@ FCadenceArcHistoryFocus MakeHistoryFocus(const FCadenceArcDebugEvent& Event)
 		|| Event.Operation == ECadenceArcDebugOperation::Initialize
 		|| Event.Operation == ECadenceArcDebugOperation::ActionCancelled
 		|| Event.Operation == ECadenceArcDebugOperation::ActionInterrupted;
-	Focus.SourceNode = bReturnsSomewhere && !Event.bFailed ? Event.CommittedAfter : Event.CommittedBefore;
+	Focus.SourceNode = bReturnsSomewhere && !Event.bFailed ? Event.CommittedAfter : ResolutionSource(Event);
 	Focus.InputTag = Event.InputTag;
 	return Focus;
 }

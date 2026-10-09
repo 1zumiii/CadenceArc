@@ -25,6 +25,8 @@ enum class ECadenceArcDebugOperation : uint8
 	ActionInterrupted,
 	OpenWindow,
 	CloseWindow,
+	ComboReset, // 新输入因停顿超时改从入口选边，不提前提交动作节点
+	FallbackToEntry, // 源节点无对应输入转移，尝试入口
 };
 
 // 一条历史记录。字段按操作类型填写，其余保持默认值；只保存值，不持有任何 UObject。
@@ -65,6 +67,10 @@ struct FCadenceArcDebugEvent
 	FGameplayTagContainer ContextTags; // 持久上下文与事件上下文的并集
 	bool bHasPauseDuration = false; // 没有停顿起点（还没有完成过动作）时为 false
 	double PauseDurationSeconds = 0.0; // 缓冲的输入和缓冲的松手按 0
+	FGameplayTag ResolutionSourceActionTag; // 实际选边源，可能与已提交节点不同
+	FGameplayTag RecoverySourceActionTag;
+	FGameplayTag RecoveryTargetActionTag;
+	double ComboResetSeconds = 0.0;
 
 	// ---- 调用前后 ----
 	ECadenceArcResolverState StateBefore = ECadenceArcResolverState::Uninitialized;

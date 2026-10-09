@@ -196,6 +196,8 @@ namespace CadenceArc::Editor::Tests
 		Test.TestTrue(*FString::Printf(TEXT("%s: repeated build is identical"), What),
 		              First.ResolverState == Second.ResolverState
 		              && First.CommittedNodeIndex == Second.CommittedNodeIndex
+		              && First.EffectiveSourceActionTag == Second.EffectiveSourceActionTag
+		              && First.ComboResetRemainingSeconds == Second.ComboResetRemainingSeconds
 		              && First.CandidateTargetNodeIndex == Second.CandidateTargetNodeIndex
 		              && First.CandidateEdgeIndex == Second.CandidateEdgeIndex
 		              && First.OutstandingRequest.RequestId == Second.OutstandingRequest.RequestId
@@ -203,6 +205,65 @@ namespace CadenceArc::Editor::Tests
 		              && First.BufferedInputTag == Second.BufferedInputTag
 		              && First.HoldSnapshot.bHasHold == Second.HoldSnapshot.bHasHold);
 		return First;
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcDebugViewRecoveryTest,
+		"CadenceArc.Editor.DebugView.RecoverySourceAndCountdown",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcDebugViewRecoveryTest::RunTest(const FString& Parameters)
+	{
+		UCadenceArcGraph* Graph = MakeViewGraph();
+		Graph->ComboResetSeconds = 1.0;
+		UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+		if (!TestTrue(TEXT("Recovery graph initializes"), Resolver->Initialize(Graph) == ECadenceArcResolverInitResult::Success))
+		{
+			return false;
+		}
+		const FCadenceArcGraphLayout Layout = BuildGraphLayout(*Graph);
+		FCadenceArcActionRequest Request;
+		if (!RequestPress(*this, Resolver, View_InputLight(), Request))
+		{
+			return false;
+		}
+		Resolver->NotifyActionStarted(Request.RequestId);
+		Resolver->NotifyActionCompleted(Request.RequestId, 2.0);
+		Resolver->AdvanceInputTime(2.25);
+		FCadenceArcDebugView View = BuildReadOnly(*this, TEXT("Before recovery"), *Resolver, Layout);
+		TestEqual(TEXT("Countdown uses last host time"), View.ComboResetRemainingSeconds, 0.75);
+		TestTrue(TEXT("Source remains committed before deadline"), View.EffectiveSourceActionTag == View_Light01());
+		Resolver->AdvanceInputTime(3.0);
+		View = BuildReadOnly(*this, TEXT("At recovery"), *Resolver, Layout);
+		TestEqual(TEXT("Deadline has expired"), View.ComboResetRemainingSeconds, 0.0);
+		TestTrue(TEXT("Next resolution starts at entry"), View.EffectiveSourceActionTag == View_Root());
+		ExpectIndices(*this, TEXT("Recovery preserves committed highlight"), View, ViewNode_Light01, INDEX_NONE, INDEX_NONE);
+		const FCadenceArcSubmitOutcome Outcome = Resolver->SubmitInput(MakeViewPress(View_InputLight(), 3.0));
+		TestTrue(TEXT("Entry request produced"), Outcome.GetCategory() == ECadenceArcResolutionCategory::RequestProduced);
+		View = BuildReadOnly(*this, TEXT("Recovery awaiting start"), *Resolver, Layout);
+		ExpectIndices(*this, TEXT("Candidate uses entry edge"), View, ViewNode_Light01, ViewNode_Light01, ViewEdge_RootLight);
+
+		// 另一实例在到期之前授予 Hold：跨过期限后仍显示冻结来源，不能显示入口倒计时。
+		UCadenceArcGraph* HoldGraph = MakeViewGraph();
+		HoldGraph->ComboResetSeconds = 1.0;
+		AddViewTransition(HoldGraph->Nodes[ViewNode_Light01], View_InputHeavy(), View_Light02(),
+			ECadenceArcInputPhase::Released);
+		UCadenceArcResolver* HoldResolver = NewObject<UCadenceArcResolver>();
+		if (!TestTrue(TEXT("Hold recovery graph initializes"), HoldResolver->Initialize(HoldGraph) == ECadenceArcResolverInitResult::Success)
+			|| !RequestPress(*this, HoldResolver, View_InputLight(), Request))
+		{
+			return false;
+		}
+		HoldResolver->NotifyActionStarted(Request.RequestId);
+		HoldResolver->NotifyActionCompleted(Request.RequestId, 2.0);
+		TestTrue(TEXT("Hold granted before deadline"),
+			HoldResolver->BeginInputHold(MakeViewToken(), MakeViewPress(View_InputHeavy(), 2.25)).GetResult()
+			== ECadenceArcHoldResult::Granted);
+		HoldResolver->AdvanceInputTime(3.0);
+		View = BuildReadOnly(*this, TEXT("Hold freezes recovery source"), *HoldResolver, BuildGraphLayout(*HoldGraph));
+		TestTrue(TEXT("Hold still shows granted source"), View.EffectiveSourceActionTag == View_Light01());
+		TestEqual(TEXT("Hold suppresses countdown"), View.ComboResetRemainingSeconds, -1.0);
+		return !HasAnyErrors();
 	}
 
 	IMPLEMENT_SIMPLE_AUTOMATION_TEST(

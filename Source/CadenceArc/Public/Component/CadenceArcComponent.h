@@ -222,6 +222,14 @@ public:
 	UFUNCTION(BlueprintPure, Category="CadenceArc")
 	FGameplayTag GetCurrentActionTag() const;
 
+	// 使用组件的时间来源查询，不推进解析器或提交节点。
+	UFUNCTION(BlueprintPure, Category="CadenceArc|State")
+	FGameplayTag GetEffectiveActionTag() const;
+
+	// -1 不计时，0 已到期，正数为下一次输入从入口解析前的剩余秒数。
+	UFUNCTION(BlueprintPure, Category="CadenceArc|State")
+	double GetComboResetRemainingSeconds() const;
+
 	// 底层解析器，用于调试或高级查询。通过它直接修改解析器会绕过组件，组件不会发出 OnHoldEnded。
 	UFUNCTION(BlueprintPure, Category="CadenceArc")
 	UCadenceArcResolver* GetResolver() const { return Resolver; }
@@ -265,7 +273,7 @@ private:
 	FCadenceArcInputResult ReleaseInputInternal(const FGameplayTag& InputTag, const FGameplayTagContainer* ExplicitContext);
 	FGameplayTagContainer CollectContext(const FGameplayTag& InputTag, ECadenceArcInputPhase Phase) const;
 	// 当前节点是否有这个 Tag 的 Released 转移；HoldRelease 的键据此决定是否申请按住资格
-	bool CurrentNodeHasReleasedEdge(const FGameplayTag& InputTag) const;
+	bool CurrentNodeHasReleasedEdge(const FGameplayTag& InputTag, double NowSeconds) const;
 
 	// 调用解析器前记下当前的按住资格；调用后资格消失或换了 Token，就发出一次 OnHoldEnded
 	FCadenceArcHoldSnapshot CaptureHold() const;

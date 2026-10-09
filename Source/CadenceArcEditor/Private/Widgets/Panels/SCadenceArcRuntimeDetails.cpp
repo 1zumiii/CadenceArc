@@ -69,6 +69,14 @@ void SCadenceArcRuntimeDetails::Construct(const FArguments& InArgs)
 			.Padding(4.f)
 			[
 				SNew(STextBlock)
+				.Text(this, &SCadenceArcRuntimeDetails::GetRecoveryText)
+				.AutoWrapText(true)
+			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(4.f)
+			[
+				SNew(STextBlock)
 				.Text(this, &SCadenceArcRuntimeDetails::GetRequestText)
 				.AutoWrapText(true)
 			]
@@ -127,6 +135,16 @@ FText SCadenceArcRuntimeDetails::GetStateText() const
 	return bHasResolver
 		? FText::FromString(FString::Printf(TEXT("State: %s"), ResolverStateName(LatestView.ResolverState)))
 		: FText::FromString(TEXT("State: no PIE Resolver selected"));
+}
+
+FText SCadenceArcRuntimeDetails::GetRecoveryText() const
+{
+	const double Remaining = LatestView.ComboResetRemainingSeconds;
+	const FString Countdown = Remaining < 0.0 ? FString(TEXT("inactive / held"))
+		: Remaining == 0.0 ? FString(TEXT("expired (entry source)"))
+		: FString::Printf(TEXT("%.2fs remaining"), Remaining);
+	return FText::FromString(FString::Printf(TEXT("Effective source: %s\nCombo reset: %s"),
+		*TagNameOrNone(LatestView.EffectiveSourceActionTag), *Countdown));
 }
 
 FText SCadenceArcRuntimeDetails::GetRequestText() const

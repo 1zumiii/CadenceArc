@@ -35,11 +35,14 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 | `Resolver/CadenceArcResolverHoldTests.cpp` | 按住资格、阶段、手动和自动松手、蓄力保护、小数阈值边界 |
 | `Resolver/CadenceArcResolverConditionTests.cpp` | 转移条件：默认值等价、上下文并集和层级匹配、优先级、`ConditionNotMet`、运行时歧义、停顿区间、按住的上下文和停顿 |
 | `Resolver/CadenceArcResolverDebugHistoryTests.cpp` | 调试历史的记录顺序、失败分类、沿用最近宿主时间的记录、环形缓冲、选边时的上下文和停顿（仅编辑器构建） |
+| `Resolver/CadenceArcResolverRecoveryTests.cpp` | 连招恢复：重置阈值、有效源和倒计时查询、缓冲不重置、按住在授予时决定源节点、回退只针对无匹配、按住回退入口的 Released 边、调试历史记录 |
 | `Graph/CadenceArcGraphValidationTests.cpp` | 图的拓扑校验 |
 | `Graph/CadenceArcHoldValidationTests.cpp` | 阶段、时长区间、蓄力配置、旧名重定向 |
 | `Graph/CadenceArcConditionValidationTests.cpp` | 条件下的重叠规则、单边条件矛盾、无效停顿区间、可达性警告 |
+| `Graph/CadenceArcRecoveryValidationTests.cpp` | 连招恢复字段的默认值和取值校验、停顿区间与重置时间冲突的错误和警告、开启回退后的可达性分析 |
 | `Input/CadenceArcInputTrackerTests.cpp` | 按下和松开的配对、时长、Token |
 | `Component/CadenceArcComponentTests.cpp` | CadenceArc 组件：按键配对、输入方式配置和无松手转移时的按下回退、上下文提供者、输入处理结果、按住结束通知、按住资格的提交和取消、逐帧推进与自动释放、统一请求出口、初始化前的持久上下文、注入的时间来源 |
+| `Component/CadenceArcComponentRecoveryTests.cpp` | 组件的有效源和倒计时查询，`HoldIfAvailable` 按实际选边源判断是否申请按住 |
 
 ## Enhanced Input 适配测试
 
@@ -72,8 +75,8 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 | `CadenceArcLayoutRoutingTests.cpp` | 直角折线的端点保持与竖线分隔、端口重排后的交叉数量 |
 | `CadenceArcLayoutCompactChainTests.cpp` | 紧凑链的成组条件和模式切换 |
 | `CadenceArcViewportMathTests.cpp` | 跟随缩放和滚动、视口外提示、命中测试 |
-| `CadenceArcDebugViewTests.cpp` | 实时视图模型：当前节点、候选、预备边（含按条件选档位）、分支距离 |
-| `CadenceArcDebugEventTextTests.cpp` | Arc History 显示的文字 |
+| `CadenceArcDebugViewTests.cpp` | 实时视图模型：当前节点、候选、预备边（含按条件选档位）、分支距离、有效选边源和重置倒计时 |
+| `CadenceArcDebugEventTextTests.cpp` | Arc History 显示的文字、连招恢复记录和实际选边源 |
 | `CadenceArcConditionTextTests.cpp` | 端口行的条件标注、未满足条件的说明、条件类失败和选边上下文的文字 |
 | `CadenceArcInputDisplayTests.cpp` | 左下角输入显示：最近输入、上下文、缓冲和忽略标记、按住、停顿、变暗 |
 

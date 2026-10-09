@@ -227,18 +227,19 @@ ECadenceArcInputMode UCadenceArcComponent::GetInputMode(const FGameplayTag& Inpu
 	return Mode ? *Mode : ECadenceArcInputMode::PressOnly;
 }
 
-bool UCadenceArcComponent::CurrentNodeHasReleasedEdge(const FGameplayTag& InputTag) const
+FGameplayTag UCadenceArcComponent::GetEffectiveActionTag() const
 {
-	const UCadenceArcGraph* CurrentGraph = Resolver ? Resolver->GetGraph() : nullptr;
-	const FCadenceArcNode* Node = CurrentGraph ? CurrentGraph->FindAction(Resolver->GetCurrentActionTag()) : nullptr;
-	if (!Node)
-	{
-		return true; // 找不到当前节点时仍走按住路径，由解析器报告错误
-	}
-	return Node->Transitions.ContainsByPredicate([&InputTag](const FCadenceArcTransition& Edge)
-	{
-		return Edge.InputTag == InputTag && Edge.InputPhase == ECadenceArcInputPhase::Released;
-	});
+	return HasInitializedResolver() ? Resolver->GetEffectiveActionTag(GetTimeSeconds()) : FGameplayTag();
+}
+
+double UCadenceArcComponent::GetComboResetRemainingSeconds() const
+{
+	return HasInitializedResolver() ? Resolver->GetComboResetRemainingSeconds(GetTimeSeconds()) : -1.0;
+}
+
+bool UCadenceArcComponent::CurrentNodeHasReleasedEdge(const FGameplayTag& InputTag, const double NowSeconds) const
+{
+	return Resolver && Resolver->HasReleasedTransitionForInput(InputTag, NowSeconds);
 }
 
 void UCadenceArcComponent::SetContextProvider(UObject* InProvider)
@@ -333,7 +334,7 @@ FCadenceArcInputResult UCadenceArcComponent::PressInputInternal(
 	// HoldRelease 始终申请按住资格；HoldIfAvailable 只在当前节点有 Released 转移时申请，否则立即提交
 	const ECadenceArcInputMode Mode = GetInputMode(InputTag);
 	const bool bHold = Mode == ECadenceArcInputMode::HoldRelease
-		|| (Mode == ECadenceArcInputMode::HoldIfAvailable && CurrentNodeHasReleasedEdge(InputTag));
+		|| (Mode == ECadenceArcInputMode::HoldIfAvailable && CurrentNodeHasReleasedEdge(InputTag, Now));
 	PressedByTag.Add(InputTag, FTrackedPress{Pressed.GetToken(), bHold});
 
 	// Tracker 只负责配对和时间；上下文写进事件副本，由解析器随缓冲和资格一起保存

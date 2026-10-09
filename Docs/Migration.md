@@ -75,3 +75,11 @@
 
 - 插件新增可选的运行时模块 `CadenceArcGAS`，并在插件描述文件中声明依赖 Gameplay Abilities 插件。启用 CadenceArc 时会一并启用 Gameplay Abilities。核心模块 `CadenceArc` 的依赖不变。详见[GAS 执行器](GAS.md)。
 - 已有的执行器代码不需要修改。改用 `UCadenceArcAbilityExecutorComponent` 时，删除原来订阅 `OnActionRequested` 的执行器，避免同一个请求被执行两次。
+
+## 连招恢复（0.6.0 之后）
+
+- `UCadenceArcGraph` 新增 `ComboResetSeconds` 和 `bFallbackToEntryOnNoMatch`，默认都关闭，已有资产的行为不变。详见[动作图](Graph.md#连招恢复)和[解析器](Resolver.md#连招恢复)。
+- 开启任一功能后，`FCadenceArcActionRequest::SourceActionTag` 可能是入口，而不是 `GetCurrentActionTag()` 返回的节点。执行器如果用请求的源节点做判断，需要考虑这种情况。
+- 开启 `ComboResetSeconds` 后，非入口节点上停顿区间下限不小于重置时间的边会被校验报错，已有资产需要调整其中一项。
+- `ECadenceArcDebugOperation` 在末尾追加了 `ComboReset` 和 `FallbackToEntry`，已有成员的数值不变。
+- 解析器和 CadenceArc 组件新增查询 `GetEffectiveActionTag` 和 `GetComboResetRemainingSeconds`。

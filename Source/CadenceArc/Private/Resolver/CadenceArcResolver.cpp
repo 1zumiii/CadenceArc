@@ -45,11 +45,13 @@ UCadenceArcResolver::FEdgeMatch UCadenceArcResolver::MatchTransition(
 	DebugResolutionContext = Context;
 	DebugResolutionPause = PauseDurationSeconds;
 	DebugResolutionEvent = Event;
+	DebugResolutionSource = SourceActionTag;
 #endif
 	using CadenceArc::GraphQuery::EMatchResult;
 	const CadenceArc::GraphQuery::FTransitionMatch Match = CadenceArc::GraphQuery::FindUniqueTransition(
 		*Graph, SourceActionTag, Event, Context, PauseDurationSeconds, EdgesOverride);
 	FEdgeMatch Result;
+	Result.SourceActionTag = SourceActionTag;
 	Result.TargetActionTag = Match.TargetActionTag;
 	switch (Match.Result)
 	{
@@ -67,6 +69,104 @@ double UCadenceArcResolver::GetPauseDurationSeconds(const FCadenceArcInputEvent&
 {
 	return LastCompletionTimestampSeconds >= 0.0
 		? Event.TimestampSeconds - LastCompletionTimestampSeconds : -1.0;
+}
+
+FGameplayTag UCadenceArcResolver::GetFreshInputSourceActionTag(const double NowSeconds) const
+{
+	if (IsInitialized() && State == ECadenceArcResolverState::Ready
+		&& FMath::IsFinite(NowSeconds) && NowSeconds >= 0.0
+		&& FMath::IsFinite(Graph->ComboResetSeconds) && Graph->ComboResetSeconds > 0.0
+		&& LastCompletionTimestampSeconds >= 0.0
+		&& NowSeconds - LastCompletionTimestampSeconds >= Graph->ComboResetSeconds)
+	{
+		return Graph->EntryActionTag;
+	}
+	return CurrentActionTag;
+}
+
+FGameplayTag UCadenceArcResolver::GetEffectiveActionTag(const double NowSeconds) const
+{
+	// 资格一旦授予，松手使用冻结的源；查询不能让 UI 把蓄力途中到期误报成重置。
+	return InputSlot.SlotState == ECadenceArcInputSlotState::PendingHold
+		? InputSlot.SourceActionTag : GetFreshInputSourceActionTag(NowSeconds);
+}
+
+double UCadenceArcResolver::GetComboResetRemainingSeconds(const double NowSeconds) const
+{
+	if (!IsInitialized() || State != ECadenceArcResolverState::Ready
+		|| CurrentActionTag == Graph->EntryActionTag
+		|| InputSlot.SlotState == ECadenceArcInputSlotState::PendingHold
+		|| !FMath::IsFinite(NowSeconds) || NowSeconds < 0.0
+		|| LastCompletionTimestampSeconds < 0.0 || NowSeconds < LastCompletionTimestampSeconds
+		|| !FMath::IsFinite(Graph->ComboResetSeconds) || Graph->ComboResetSeconds <= 0.0)
+	{
+		return -1.0;
+	}
+	return FMath::Max(0.0, Graph->ComboResetSeconds - (NowSeconds - LastCompletionTimestampSeconds));
+}
+
+bool UCadenceArcResolver::HasReleasedTransitionForInput(const FGameplayTag& InputTag, const double NowSeconds) const
+{
+	if (!IsInitialized())
+	{
+		return false;
+	}
+	const FGameplayTag Source = GetFreshInputSourceActionTag(NowSeconds);
+	const FCadenceArcNode* Node = Graph->FindAction(Source);
+	if (!Node || !Node->IsValidTransition())
+	{
+		return false;
+	}
+	const auto HasEdge = [&InputTag](const FCadenceArcNode& Candidate)
+	{
+		return Candidate.Transitions.ContainsByPredicate([&InputTag](const FCadenceArcTransition& Edge)
+		{
+			return Edge.InputTag == InputTag && Edge.InputPhase == ECadenceArcInputPhase::Released;
+		});
+	};
+	if (HasEdge(*Node))
+	{
+		return true;
+	}
+	const FCadenceArcNode* Entry = Graph->FindAction(Graph->EntryActionTag);
+	return Graph->bFallbackToEntryOnNoMatch && Source != Graph->EntryActionTag
+		&& Entry && Entry->IsValidTransition() && HasEdge(*Entry);
+}
+
+UCadenceArcResolver::FEdgeMatch UCadenceArcResolver::MatchInputWithFallback(
+	const FGameplayTag& SourceActionTag, const FCadenceArcInputEvent& Event, const double PauseDurationSeconds)
+{
+	FEdgeMatch Match = MatchTransition(SourceActionTag, Event, PauseDurationSeconds);
+	// 只回退一次。条件失败、歧义或坏图都不能借入口分支绕过。
+	if (Match.Reason == ECadenceArcResolutionReason::NoMatchingTransition
+		&& Graph->bFallbackToEntryOnNoMatch && SourceActionTag != Graph->EntryActionTag)
+	{
+		RecordEntryRecovery(false, SourceActionTag, Event, PauseDurationSeconds);
+		Match = MatchTransition(Graph->EntryActionTag, Event, PauseDurationSeconds);
+	}
+	return Match;
+}
+
+void UCadenceArcResolver::RecordEntryRecovery(const bool bTimeout, const FGameplayTag& SourceActionTag,
+	const FCadenceArcInputEvent& Event, const double PauseDurationSeconds)
+{
+#if WITH_EDITOR
+	// 这是选边源变更的诊断，不是动作提交；直接写入，避免消耗外层调用的选边记录。
+	FCadenceArcDebugEvent Record = BeginDebugRecord(bTimeout
+		? ECadenceArcDebugOperation::ComboReset : ECadenceArcDebugOperation::FallbackToEntry);
+	Record.StateAfter = State;
+	Record.CommittedAfter = CurrentActionTag;
+	Record.InputTag = Event.InputTag;
+	Record.InputPhase = Event.InputPhase;
+	Record.bHasTimestamp = true;
+	Record.TimestampSeconds = Event.TimestampSeconds;
+	Record.bHasPauseDuration = PauseDurationSeconds >= 0.0;
+	Record.PauseDurationSeconds = PauseDurationSeconds;
+	Record.ComboResetSeconds = Graph->ComboResetSeconds;
+	Record.RecoverySourceActionTag = SourceActionTag;
+	Record.RecoveryTargetActionTag = Graph->EntryActionTag;
+	DebugHistory.Add(MoveTemp(Record));
+#endif
 }
 
 void UCadenceArcResolver::RecordCompletionTimestamp(const double CompletionTimestampSeconds)
@@ -155,12 +255,18 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::SubmitInputImpl(const FCadenceArcI
 	{
 	case ECadenceArcResolverState::Ready:
 		{
-			const auto Match = MatchTransition(CurrentActionTag, InInputEvent, GetPauseDurationSeconds(InInputEvent));
+			const FGameplayTag Source = GetFreshInputSourceActionTag(InInputEvent.TimestampSeconds);
+			const double Pause = GetPauseDurationSeconds(InInputEvent);
+			if (Source != CurrentActionTag)
+			{
+				RecordEntryRecovery(true, CurrentActionTag, InInputEvent, Pause);
+			}
+			const auto Match = MatchInputWithFallback(Source, InInputEvent, Pause);
 			if (Match.Reason == ECadenceArcResolutionReason::None)
 			{
 				// 只有真正被接受的输入才替换槽：解析失败时 Holding 资格原样保留
 				ClearInputSlot();
-				Outcome.SetRequestProduced(CommitRequest(InInputEvent.InputTag, Match.TargetActionTag));
+				Outcome.SetRequestProduced(CommitRequest(InInputEvent.InputTag, Match.TargetActionTag, Match.SourceActionTag));
 				CheckSlotInvariants();
 			}
 			else
@@ -183,12 +289,13 @@ FCadenceArcSubmitOutcome UCadenceArcResolver::SubmitInputImpl(const FCadenceArcI
 }
 
 FCadenceArcActionRequest UCadenceArcResolver::CommitRequest(const FGameplayTag& InputTag,
-                                                            const FGameplayTag& TargetActionTag)
+                                                            const FGameplayTag& TargetActionTag,
+                                                            const FGameplayTag& SourceActionTag)
 {
 	FCadenceArcActionRequest NewRequest;
 	NewRequest.RequestId = NextRequestId++;
 	NewRequest.InputTag = InputTag;
-	NewRequest.SourceActionTag = CurrentActionTag;
+	NewRequest.SourceActionTag = SourceActionTag;
 	NewRequest.TargetActionTag = TargetActionTag;
 	OutstandingRequest = NewRequest;
 	State = ECadenceArcResolverState::AwaitingStart;
@@ -536,11 +643,11 @@ FCadenceArcActionCompletionOutcome UCadenceArcResolver::NotifyActionCompletedImp
 		Outcome.SetBufferConsumption(ECadenceArcResolutionCategory::NoAction, ECadenceArcResolutionReason::Expired);
 		return Outcome;
 	}
-	const auto Match = MatchTransition(CurrentActionTag, SlotCopy.InputEvent, 0.0);
+	const auto Match = MatchInputWithFallback(CurrentActionTag, SlotCopy.InputEvent, 0.0);
 	FCadenceArcActionRequest NewRequest; // 非 None 时保持空请求
 	if (Match.Reason == ECadenceArcResolutionReason::None)
 	{
-		NewRequest = CommitRequest(SlotCopy.InputEvent.InputTag, Match.TargetActionTag); // 内部已设 AwaitingStart
+		NewRequest = CommitRequest(SlotCopy.InputEvent.InputTag, Match.TargetActionTag, Match.SourceActionTag); // 内部已设 AwaitingStart
 	}
 	Outcome.SetBufferConsumption(CategoryOf(Match.Reason), Match.Reason, NewRequest);
 	return Outcome;

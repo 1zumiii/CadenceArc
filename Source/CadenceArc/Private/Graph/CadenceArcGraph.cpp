@@ -52,6 +52,10 @@ bool UCadenceArcGraph::ValidateGraph(TArray<FText>& OutErrors, TArray<FText>* Ou
 	{
 		AddError(TEXT("MaxBufferedInputAgeSeconds must be non-negative and finite."));
 	}
+	if (ComboResetSeconds < 0.0 || !FMath::IsFinite(ComboResetSeconds))
+	{
+		AddError(TEXT("ComboResetSeconds must be non-negative and finite."));
+	}
 
 	TArray<FText> NodeErrors;
 	for (int32 NodeIndex = 0; NodeIndex < Nodes.Num(); ++NodeIndex)
@@ -65,13 +69,33 @@ bool UCadenceArcGraph::ValidateGraph(TArray<FText>& OutErrors, TArray<FText>* Ou
 		}
 		for (int32 EdgeIndex = 0; EdgeIndex < Node.Transitions.Num(); ++EdgeIndex)
 		{
-			const FGameplayTag Target = Node.Transitions[EdgeIndex].TargetActionTag;
+			const FCadenceArcTransition& Edge = Node.Transitions[EdgeIndex];
+			const FGameplayTag Target = Edge.TargetActionTag;
 			if (Target.IsValid() && !TagMap.Contains(Target))
 			{
 				AddError(FString::Printf(
 					TEXT(
 						"Transition at index %d in node '%s' (index %d) has a TargetActionTag '%s' that does not exist in the nodes."),
 					EdgeIndex, *Node.ActionTag.ToString(), NodeIndex, *Target.ToString()));
+			}
+			// 超时恢复先于普通续招选择；仅诊断有效区间，保留资产中填写的原始上下限。
+			if (ComboResetSeconds > 0.0 && FMath::IsFinite(ComboResetSeconds)
+				&& Node.ActionTag != EntryActionTag && Edge.bUsePauseRange && Edge.PauseRange.IsValid())
+			{
+				const FCadenceArcHeldDurationRange& Range = Edge.PauseRange;
+				if (Range.MinHeldDurationSeconds >= ComboResetSeconds)
+				{
+					AddError(FString::Printf(
+						TEXT("Transition at index %d in node '%s' (index %d): PauseRange minimum %.17g must be less than ComboResetSeconds %.17g."),
+						EdgeIndex, *Node.ActionTag.ToString(), NodeIndex, Range.MinHeldDurationSeconds, ComboResetSeconds));
+				}
+				else if (OutWarnings && (!Range.bHasMaxHeldDuration
+					|| Range.MaxHeldDurationSecondsExclusive > ComboResetSeconds))
+				{
+					OutWarnings->Add(FText::FromString(FString::Printf(
+						TEXT("Transition at index %d in node '%s' (index %d): PauseRange is limited by ComboResetSeconds; effective range is [%.17g, %.17g). Asset configuration is unchanged."),
+						EdgeIndex, *Node.ActionTag.ToString(), NodeIndex, Range.MinHeldDurationSeconds, ComboResetSeconds)));
+				}
 			}
 		}
 	}

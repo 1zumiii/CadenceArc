@@ -13,6 +13,9 @@ struct FCadenceArcDebugView
 	ECadenceArcResolverState ResolverState = ECadenceArcResolverState::Uninitialized;
 	FCadenceArcActionRequest OutstandingRequest;
 	int32 CommittedNodeIndex = INDEX_NONE;
+	// 下一次解析的来源与已提交节点分开；超时恢复不会移动已提交高亮。
+	FGameplayTag EffectiveSourceActionTag;
+	double ComboResetRemainingSeconds = -1.0;
 	int32 CandidateTargetNodeIndex = INDEX_NONE;
 	int32 CandidateEdgeIndex = INDEX_NONE;
 	bool bBufferWindowOpen = false;

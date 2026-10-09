@@ -8,6 +8,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Misc/AutomationTest.h"
+#include "Graph/CadenceArcGraph.h"
 #include "Tests/CadenceArcAutomationTags.h"
 #include "ViewModel/CadenceArcDebugEventText.h"
 
@@ -129,6 +130,51 @@ namespace CadenceArc::Editor::Tests
 			TestEqual(TEXT("Auto release summary"), FormatDebugEvent(Event).Summary,
 			          FString(TEXT("Heavy auto-released after 1.80s → Light01 (request #9)")));
 		}
+		return !HasAnyErrors();
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+		FCadenceArcRecoveryEventTextTest,
+		"CadenceArc.Editor.History.RecoverySource",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcRecoveryEventTextTest::RunTest(const FString& Parameters)
+	{
+		FCadenceArcDebugEvent Event = MakeTextEvent(ECadenceArcDebugOperation::ComboReset);
+		Event.CommittedBefore = Event.CommittedAfter = Text_Light01();
+		Event.RecoverySourceActionTag = Text_Light01();
+		Event.RecoveryTargetActionTag = Text_Root();
+		Event.bHasPauseDuration = true;
+		Event.PauseDurationSeconds = 1.25;
+		Event.ComboResetSeconds = 1.0;
+		const FCadenceArcDebugEventText Reset = FormatDebugEvent(Event);
+		TestTrue(TEXT("Reset explains elapsed pause and threshold"), Reset.Summary.Contains(TEXT("pause 1.25s >= 1.00s")));
+		TestTrue(TEXT("Reset names the source selection"), Reset.Summary.Contains(TEXT("source Light01 → entry Root")));
+		TestTrue(TEXT("Reset does not imply a committed transition"), Reset.Summary.Contains(TEXT("committed unchanged")));
+		TestFalse(TEXT("Recovery is informational"), Reset.bFailed);
+		TestTrue(TEXT("Recovery has no failure detail"), Reset.FailureDetail.IsEmpty());
+		FCadenceArcHistoryFocus Focus = MakeHistoryFocus(Event);
+		TestTrue(TEXT("Recovery focuses entry without inventing an edge"), Focus.SourceNode == Text_Root()
+			&& !Focus.TargetNode.IsValid() && !Focus.InputTag.IsValid());
+		Event.Operation = ECadenceArcDebugOperation::FallbackToEntry;
+		TestTrue(TEXT("Fallback has an explicit summary"), FormatDebugEvent(Event).Summary.Contains(TEXT("Fallback to entry")));
+
+		UCadenceArcGraph* Graph = NewObject<UCadenceArcGraph>();
+		FCadenceArcNode& Root = Graph->Nodes.AddDefaulted_GetRef();
+		Root.ActionTag = Text_Root();
+		FCadenceArcTransition& Edge = Root.Transitions.AddDefaulted_GetRef();
+		Edge.InputTag = Text_Light();
+		Edge.TargetActionTag = Text_Light01();
+		Edge.RequiredContextTags.AddTag(TextTag(TEXT("CadenceArc.Automation.Context.Forward")));
+		Event.Operation = ECadenceArcDebugOperation::SubmitInput;
+		Event.InputTag = Text_Light();
+		Event.ResolutionSourceActionTag = Text_Root();
+		Event.Reason = ECadenceArcResolutionReason::ConditionNotMet;
+		Event.bFailed = true;
+		const FCadenceArcDebugEventText Failure = FormatDebugEvent(Event, Graph);
+		TestTrue(TEXT("Summary uses effective source"), Failure.Summary.Contains(TEXT("at Root")));
+		TestTrue(TEXT("Condition details inspect entry edges"), Failure.FailureDetail.Contains(TEXT("Forward")));
+		TestTrue(TEXT("Failed resolution focuses effective source"), MakeHistoryFocus(Event).SourceNode == Text_Root());
 		return !HasAnyErrors();
 	}
 

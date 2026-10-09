@@ -101,6 +101,7 @@ void UCadenceArcResolver::EndDebugRecord(FCadenceArcDebugEvent& Record)
 	{
 		Record.bHasResolutionContext = true;
 		Record.ContextTags = DebugResolutionContext;
+		Record.ResolutionSourceActionTag = DebugResolutionSource;
 		Record.bHasPauseDuration = DebugResolutionPause >= 0.0;
 		Record.PauseDurationSeconds = FMath::Max(DebugResolutionPause, 0.0);
 		if (!Record.InputTag.IsValid())

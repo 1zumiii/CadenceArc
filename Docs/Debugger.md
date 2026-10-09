@@ -45,6 +45,15 @@
 
 当前预览不使用松手事件的上下文，也未接入停顿条件，因此排除所有启用停顿区间的边。预览读取当前图，实际按住解析则使用授予资格时保存的转移副本。因此，方向变化、停顿条件或按住期间的资产修改，都可能使实际结果与预览不同。
 
+### 连招恢复
+
+图启用了[连招恢复](Graph.md#连招恢复)时，右侧 Runtime 面板多显示两行：
+
+- `Effective source`：下一次新输入实际的选边源。超时到期后显示入口；正在按住时显示资格冻结的源节点。
+- `Combo reset`：距重置的剩余秒数。到期后显示 `expired (entry source)`；未启用、没有停顿起点、动作执行中或正在按住时显示 `inactive / held`。
+
+超时到期不会移动绿色的已提交节点。重置是惰性的，直到下一次输入被接受并确认开始，已提交节点才会改变。倒计时使用解析器最近一次收到的宿主时间，最多差一帧。
+
 ### 输入显示
 
 画布左下角固定显示解析器收到的输入，类似格斗游戏训练模式的输入记录：
@@ -103,6 +112,13 @@ Arc History 显示 Arc Debugger 所选解析器的调用记录，按从新到旧
 
 - `ConditionNotMet`：例如 `No edge for Heavy P at SkillA fits: Dash needs Forward; HeavyB pause 0.10s, needs ≥0.25s. Context: Air, pause 0.10s`。
 - `AmbiguousTransition`：列出最高优先级及对应的多个候选边，并提示调整优先级或配置互斥条件。
+
+连招恢复会在对应的输入记录之前多记一条：
+
+- `Combo reset: pause 1.50s >= 1.00s, source Light01 → entry Root (committed unchanged)`：停顿超时，这次输入从入口选边；
+- `Fallback to entry: source Light02 → Root (committed unchanged)`：当前节点没有匹配的转移，改从入口选边。
+
+这两条记录只表示选边源发生了变化，已提交节点没有改变。选中它们时，图上只标记入口节点。输入记录中的 `at` 后面显示实际的选边源；条件类失败的说明也按实际选边源列出候选边。
 
 这些说明根据当前资产中的转移生成。若在 PIE 期间修改图，说明可能与记录产生时的配置不一致。
 

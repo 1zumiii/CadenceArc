@@ -83,6 +83,9 @@ FCadenceArcDebugView BuildDebugView(const UCadenceArcResolver& InResolver, const
 	DebugView.ResolverState = InResolver.GetState();
 	DebugView.OutstandingRequest = InResolver.GetOutstandingRequest();
 	DebugView.CommittedNodeIndex = FindNodeIndex(InLayout, InResolver.GetCurrentActionTag());
+	const double HostTime = InResolver.GetDebugLastHostTime();
+	DebugView.EffectiveSourceActionTag = InResolver.GetEffectiveActionTag(HostTime);
+	DebugView.ComboResetRemainingSeconds = InResolver.GetComboResetRemainingSeconds(HostTime);
 
 	if (DebugView.ResolverState == ECadenceArcResolverState::AwaitingStart)
 	{
