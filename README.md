@@ -2,7 +2,7 @@
 
 简体中文 | [English](README.en.md)
 
-CadenceArc 是一个面向 Unreal Engine 5 的数据驱动连招解析框架。连招规则以动作图的形式配置在 DataAsset 中，输入和动作均使用语义化的 GameplayTag 标识。宿主将输入事件和动作生命周期回调提交给解析器，解析器依据动作图生成动作请求，交由外部执行系统处理。框架本身不依赖特定的外部执行方式（如 GAS、蒙太奇等）。
+CadenceArc 是一个面向 Unreal Engine 5 的数据驱动连招解析框架。连招规则以动作图的形式配置在 DataAsset 中，输入和动作均使用语义化的 GameplayTag 标识。宿主将输入事件和动作生命周期回调提交给解析器，解析器依据动作图生成动作请求，交由外部执行系统处理。核心模块不依赖特定的外部执行方式（如 GAS、蒙太奇等）。
 
 ![PIE 连招中的 Arc Debugger：带条件的转移、蓄力时间轴、输入显示和 Arc History](Docs/Images/arc-debugger-overview.png)
 
@@ -18,7 +18,15 @@ CadenceArc 是一个面向 Unreal Engine 5 的数据驱动连招解析框架。�
   -> 握手回调：开始、完成、拒绝、打断
 ```
 
-CadenceArc 只决定下一个动作是什么。动作的播放、伤害结算和动画表现都由框架之外的系统负责。核心模块只依赖 Engine 和 Gameplay Tags，不依赖 GAS、动画系统或特定游戏。
+CadenceArc 的核心只决定下一个动作是什么。动作执行和伤害结算由项目负责；可选模块提供 GAS 执行器和蓄力动画表现。核心模块只依赖 Engine 和 Gameplay Tags，不依赖 GAS 或特定游戏。
+
+| 模块 | 职责 |
+| --- | --- |
+| `CadenceArc` | 动作图、解析器和标准接入组件 |
+| `CadenceArcEnhancedInput` | Enhanced Input 绑定和输入清理 |
+| `CadenceArcGAS` | GAS 执行器和缓冲窗口通知 |
+| `CadenceArcAnimation` | 按图中的蓄力时间播放 Montage 起手与停留段，不依赖 GAS 或 Enhanced Input |
+| `CadenceArcEditor` | 编辑器校验、Arc Debugger 和 Arc History |
 
 ## 功能
 
@@ -26,6 +34,7 @@ CadenceArc 只决定下一个动作是什么。动作的播放、伤害结算和
 - **标准接入组件**：`UCadenceArcComponent` 自动处理时间戳、逐帧推进、按键配对、输入方式和请求出口，并提供输入处理结果和按住结束通知。开发者只需配置一次输入方式和上下文来源，并实现执行器回调。
 - **Enhanced Input 适配**：可选模块 `CadenceArcEnhancedInput`。在数据资产中配置 Input Action 对应的输入 Tag 和输入方式，角色被控制后自动绑定，并在失去控制时取消按住中的输入。
 - **GAS 执行器**：可选模块 `CadenceArcGAS`。按动作 Tag 激活对应的 Ability，把 Ability 的激活、结束和取消转为握手回调，缓冲窗口由蒙太奇通知开关。
+- **蓄力动画**：可选模块 `CadenceArcAnimation`。订阅蓄力阶段，按动作图中的时长计算 Montage 分段播放速率；松手后的出招仍由执行器负责。
 - **蓝图支持**：组件、适配组件和上下文接口都可以在蓝图中使用，不写 C++ 也能完成接入。
 - **两阶段握手**：执行器确认开始后，解析器才提交目标节点。执行器拒绝请求后，解析器清空候选请求，回到 `Ready`，保留原来的动作节点。
 - **输入缓冲**：缓冲窗口由执行器开关。缓冲区只有一格，新输入覆盖旧输入，可以设置过期时间。
@@ -49,7 +58,7 @@ CadenceArc 支持 C++ 和蓝图两种接入方式，使用相同的资产和组�
 
 ### C++
 
-在模块的 `Build.cs` 中添加依赖 `"CadenceArc"` 和 `"GameplayTags"`；使用 Enhanced Input 适配和 GAS 执行器时，分别再添加 `"CadenceArcEnhancedInput"` 和 `"CadenceArcGAS"`。使用其他输入系统时，在组件的 `InputModes` 中配置输入方式，并在输入绑定中调用 `PressInput` 和 `ReleaseInput`。
+在模块的 `Build.cs` 中添加依赖 `"CadenceArc"` 和 `"GameplayTags"`。使用可选组件时，再添加对应模块：输入适配用 `"CadenceArcEnhancedInput"`，GAS 执行器用 `"CadenceArcGAS"`，蓄力动画用 `"CadenceArcAnimation"`。使用其他输入系统时，在组件的 `InputModes` 中配置输入方式，并在输入绑定中调用 `PressInput` 和 `ReleaseInput`。
 
 ```cpp
 // 不使用适配组件时的输入绑定：输入方式来自 InputModes，事件上下文来自角色的 CollectInputContext
@@ -91,6 +100,7 @@ void UMyExecutor::HandleActionRequested(const FCadenceArcActionRequest& Request)
 | [Enhanced Input 适配](Docs/EnhancedInput.md) | 可选模块：用数据资产把 Input Action 绑定到组件，处理失去输入时的清理和触发器设置 |
 | [蓝图接入](Docs/Blueprint.md) | 只用蓝图接入的最小用法：资产、组件、执行器和可选功能 |
 | [GAS 执行器](Docs/GAS.md) | 可选模块：用 Ability 执行动作请求，请求与 Ability 的对应关系、缓冲窗口和注意事项 |
+| [蓄力 Montage 表现](Docs/Animation.md) | 可选模块：起手与停留分段、图驱动的速率和播放实例隔离 |
 | [解析器：握手、缓冲与时间](Docs/Resolver.md) | 状态与生命周期、执行器接入、结果类型、缓冲窗口、时间与过期、上下文与停顿 |
 | [按住输入](Docs/HoldInput.md) | 松手档位、蓄力配置、逐帧推进、宿主接入注意事项 |
 | [动作图与校验](Docs/Graph.md) | 图的字段、转移条件与优先级、校验规则 |

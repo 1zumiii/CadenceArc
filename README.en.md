@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-CadenceArc is a data-driven combo resolution framework for Unreal Engine 5. Combo rules are configured as an action graph in a DataAsset, and inputs and actions are identified by semantic GameplayTags. The host submits input events and action lifecycle callbacks to the resolver, which produces action requests from the graph and hands them to an external execution system. The framework does not depend on any particular execution method, such as GAS or animation montages.
+CadenceArc is a data-driven combo resolution framework for Unreal Engine 5. Combo rules are configured as an action graph in a DataAsset, and inputs and actions are identified by semantic GameplayTags. The host submits input events and action lifecycle callbacks to the resolver, which produces action requests from the graph and hands them to an external execution system. The core module does not depend on any particular execution method, such as GAS or animation montages.
 
 ![Arc Debugger during a PIE combo: conditional edges, the charge timeline, the input display, and Arc History](Docs/Images/arc-debugger-overview.png)
 
@@ -18,7 +18,15 @@ InputEvent (InputTag + timestamp)
   -> handshake callbacks: started, completed, rejected, interrupted
 ```
 
-CadenceArc only decides which move comes next. How an action plays, deals damage, or animates stays outside the framework. The core module depends only on Engine and Gameplay Tags, not on GAS, animation, or any particular game.
+The CadenceArc core only decides which move comes next. The project owns action execution and damage; optional modules provide a GAS executor and charge animation presentation. The core module depends only on Engine and Gameplay Tags, not on GAS or any particular game.
+
+| Module | Responsibility |
+| --- | --- |
+| `CadenceArc` | Action graphs, resolver, and standard integration component |
+| `CadenceArcEnhancedInput` | Enhanced Input binding and cleanup |
+| `CadenceArcGAS` | GAS executor and buffer-window notifies |
+| `CadenceArcAnimation` | Montage windup and hold presentation timed by the graph, without GAS or Enhanced Input dependencies |
+| `CadenceArcEditor` | Editor validation, Arc Debugger, and Arc History |
 
 ## Features
 
@@ -26,6 +34,7 @@ CadenceArc only decides which move comes next. How an action plays, deals damage
 - **Standard integration component**: `UCadenceArcComponent` handles timestamps, per-frame advance, press/release pairing, input modes, and a single request outlet, and reports input results and hold endings. You configure input modes and the context source once and implement the executor callbacks.
 - **Enhanced Input adapter**: the optional `CadenceArcEnhancedInput` module. Map Input Actions to input tags and input modes in a data asset; a component binds them automatically once the pawn is possessed and cancels held inputs when the pawn loses control.
 - **GAS executor**: the optional `CadenceArcGAS` module. Activates the ability whose asset tags match the action tag, turns its activation, end, and cancellation into handshake callbacks, and opens and closes buffer windows from montage notifies.
+- **Charge animation**: the optional `CadenceArcAnimation` module. Uses graph charge durations to calculate Montage section play rates; the executor still owns the attack after release.
 - **Blueprint support**: the component, the input binder, and the context interface all work in Blueprint, so you can integrate without writing C++.
 - **Two-phase handshake**: a resolved request commits only when the executor confirms it started; a rejection leaves state unchanged.
 - **Input buffering**: an executor-controlled window with a single slot (last input wins) and optional expiry.
@@ -49,7 +58,7 @@ Common steps:
 
 ### C++
 
-Add `"CadenceArc"` and `"GameplayTags"` to your module's `Build.cs` dependencies, plus `"CadenceArcEnhancedInput"` for the Enhanced Input adapter and `"CadenceArcGAS"` for the GAS executor. With another input system, set input modes in the component's `InputModes` and call `PressInput` and `ReleaseInput` from your input bindings.
+Add `"CadenceArc"` and `"GameplayTags"` to your module's `Build.cs` dependencies. Add the modules for any optional components you use: `"CadenceArcEnhancedInput"` for input binding, `"CadenceArcGAS"` for the GAS executor, and `"CadenceArcAnimation"` for charge animation. With another input system, set input modes in the component's `InputModes` and call `PressInput` and `ReleaseInput` from your input bindings.
 
 ```cpp
 // Input binding without the adapter: the mode comes from InputModes, event context from the character's CollectInputContext
@@ -93,6 +102,7 @@ The detailed docs are written in Chinese.
 | [Enhanced Input adapter](Docs/EnhancedInput.md) | Optional module: bind Input Actions to the component from a data asset, cleanup on lost input, trigger setup |
 | [Blueprint integration](Docs/Blueprint.md) | Minimal Blueprint-only setup: assets, components, executor, optional features |
 | [GAS executor](Docs/GAS.md) | Optional module: execute requests with abilities; how requests map to abilities, buffer windows, caveats |
+| [Charge Montage presentation](Docs/Animation.md) | Optional module: windup and hold sections, graph-driven rates, and playback instance isolation |
 | [Resolver: handshake, buffering, and time](Docs/Resolver.md) | States and lifecycle, executor integration, result types, buffer windows, time and expiry, context and pause |
 | [Hold input](Docs/HoldInput.md) | Release tiers, charge configuration, per-frame advance, host integration notes |
 | [Action graph and validation](Docs/Graph.md) | Graph fields, transition conditions and priorities, validation rules |

@@ -63,6 +63,16 @@ powershell -ExecutionPolicy Bypass -File .\Scripts\RunCadenceArcTests.ps1
 
 窗口测试直接调用执行器接口，没有实际播放蒙太奇，也未覆盖同一动画资产的窗口回调交叠。它验证的是请求编号的记录与使用，不能代替真实蒙太奇通知的集成验证。
 
+## 蓄力动画测试
+
+在 `Source/CadenceArcAnimation/Private/Tests/` 下：
+
+| 文件 | 覆盖 |
+| --- | --- |
+| `CadenceArcChargeMontageTests.cpp` | 图驱动的速率与延迟补偿、条目选择和校验、实例分段连接不修改资产、延迟清理不会停止同一资产的新播放实例、真实组件的阶段事件与取消、自动释放和 EndPlay 清理 |
+
+实例测试使用内存中构造的 Montage，调用引擎的播放接口。它验证实例归属和计时，不验证角色姿势、Slot 混合或真实 GAS Ability 的动画交接；这些表现仍需在项目中实测。
+
 ## 编辑器模块测试
 
 在 `Source/CadenceArcEditor/Private/Tests/` 下：
