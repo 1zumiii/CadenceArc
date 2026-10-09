@@ -78,7 +78,8 @@
 
 ## 连招恢复（0.6.0 之后）
 
-- `UCadenceArcGraph` 新增 `ComboResetSeconds` 和 `bFallbackToEntryOnNoMatch`，默认都关闭，已有资产的行为不变。详见[动作图](Graph.md#连招恢复)和[解析器](Resolver.md#连招恢复)。
+- `UCadenceArcGraph` 的 `ComboResetSeconds` 默认值改为 `1.0`，`bFallbackToEntryOnNoMatch` 默认开启。需要关闭时，将重置时间设为 `0`，并取消回退选项。详见[动作图](Graph.md#连招恢复)和[解析器](Resolver.md#连招恢复)。
+- 本次不批量修改已有资产。已有资产加载后的值取决于字段是否已序列化：已保存的显式值继续生效，未保存的字段使用新的类默认值。升级后请检查需要保持旧行为的图。
 - 开启任一功能后，`FCadenceArcActionRequest::SourceActionTag` 可能是入口，而不是 `GetCurrentActionTag()` 返回的节点。执行器如果用请求的源节点做判断，需要考虑这种情况。
 - 开启 `ComboResetSeconds` 后，非入口节点上停顿区间下限不小于重置时间的边会被校验报错，已有资产需要调整其中一项。
 - `ECadenceArcDebugOperation` 在末尾追加了 `ComboReset` 和 `FallbackToEntry`，已有成员的数值不变。

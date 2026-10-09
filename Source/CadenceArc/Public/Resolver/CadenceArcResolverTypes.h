@@ -288,7 +288,17 @@ struct CADENCEARC_API FCadenceArcHoldOutcome
 	[[nodiscard]] ECadenceArcHoldResult GetResult() const { return Result; }
 
 	[[nodiscard]] ECadenceArcResolutionReason GetReason() const { return Reason; }
+	// 授予时已经到达的阶段；后续 Advance 不会重复报告。
+	[[nodiscard]] const TArray<FCadenceArcInputStageChange>& GetStageChanges() const { return StageChanges; }
 private:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="CadenceArc|Resolver", meta=(AllowPrivateAccess="true"))
+	TArray<FCadenceArcInputStageChange> StageChanges;
+
+	void AddStageChange(const ECadenceArcHoldStage Stage, const double Timestamp)
+	{
+		StageChanges.Add(FCadenceArcInputStageChange{Stage, Timestamp});
+	}
+
 	// 只有 Resolver 能构造结果，外部拿到的永远是合法组合
 	void SetRejected(const ECadenceArcResolutionReason InReason)
 	{

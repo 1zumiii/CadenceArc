@@ -161,14 +161,35 @@ bool UCadenceArcChargeMontageComponent::ConfigureInstance(FAnimMontageInstance& 
 void UCadenceArcChargeMontageComponent::HandleStageChanged(FGameplayTag InputTag, const FCadenceArcInputStageChange& Change)
 {
 	UCadenceArcComponent* Source = BoundComponent.Get();
+	UE_LOG(LogCadenceArcChargeMontage, Verbose, TEXT("%s: received stage %s for %s at %.6f."),
+		*GetNameSafe(this), *UEnum::GetValueAsString(Change.ToStage), *InputTag.ToString(), Change.EffectiveTimestampSeconds);
 	if (bEndingPlay || !IsValid(Source) || !Source->GetResolver() || !IsValid(SkeletalMesh)
-		|| (Change.ToStage != ECadenceArcHoldStage::Charging && Change.ToStage != ECadenceArcHoldStage::Charged)) return;
+		|| (Change.ToStage != ECadenceArcHoldStage::Charging && Change.ToStage != ECadenceArcHoldStage::Charged))
+	{
+		UE_LOG(LogCadenceArcChargeMontage, Verbose, TEXT("%s: skipping stage: ending=%d, component=%d, resolver=%d, mesh=%d; only Charging/Charged supported."),
+			*GetNameSafe(this), bEndingPlay, IsValid(Source), IsValid(Source) && Source->GetResolver() != nullptr, IsValid(SkeletalMesh));
+		return;
+	}
 	const FCadenceArcHoldSnapshot Snapshot = Source->GetResolver()->GetInputHoldSnapshot();
 	// 同一次推进可能已跨过自动释放点；此时只会收到历史阶段事件，不能短暂重播已结束的蓄力。
-	if (!Snapshot.bHasHold || !Snapshot.bHasChargeConfig || Snapshot.InputTag != InputTag) return;
+	if (!Snapshot.bHasHold || !Snapshot.bHasChargeConfig || Snapshot.InputTag != InputTag)
+	{
+		UE_LOG(LogCadenceArcChargeMontage, Verbose, TEXT("%s: skipping stage for %s: hold=%d, charge config=%d, current input=%s. Hold may have ended during time advance (including auto-release)."),
+			*GetNameSafe(this), *InputTag.ToString(), Snapshot.bHasHold, Snapshot.bHasChargeConfig, *Snapshot.InputTag.ToString());
+		return;
+	}
 	const FCadenceArcChargeMontageEntry* Matched = FindEntry(InputTag, Snapshot.SourceActionTag);
-	if (!Matched) return;
+	if (!Matched)
+	{
+		UE_LOG(LogCadenceArcChargeMontage, Verbose, TEXT("%s: no entry for input %s / source %s; skipping presentation."),
+			*GetNameSafe(this), *InputTag.ToString(), *Snapshot.SourceActionTag.ToString());
+		return;
+	}
 	const bool bSameHold = ActivePlayback.InstanceId != INDEX_NONE && ActivePlayback.Token == Snapshot.Token;
+	if (Change.ToStage == ECadenceArcHoldStage::Charged && !bSameHold)
+	{
+		UE_LOG(LogCadenceArcChargeMontage, Verbose, TEXT("%s: Charged arrived without an owned charge instance; check earlier Charging and skip logs."), *GetNameSafe(this));
+	}
 	const FCadenceArcChargeMontageEntry Entry = bSameHold ? ActivePlayback.Entry : *Matched;
 	FString Error;
 	if (!ValidateEntry(Entry, Error))
@@ -179,7 +200,11 @@ void UCadenceArcChargeMontageComponent::HandleStageChanged(FGameplayTag InputTag
 	const double Now = Source->GetTimeSeconds();
 	// Charging 通知也可能晚到蓄满之后：直接定位 Hold，避免把完整 Windup 再播一次。
 	const ECadenceArcHoldStage Stage = Snapshot.Stage == ECadenceArcHoldStage::Charged ? ECadenceArcHoldStage::Charged : Change.ToStage;
-	if (bSameHold && Stage == ECadenceArcHoldStage::Charged && Snapshot.MaxChargedHoldSeconds == 0.0) return;
+	if (bSameHold && Stage == ECadenceArcHoldStage::Charged && Snapshot.MaxChargedHoldSeconds == 0.0)
+	{
+		UE_LOG(LogCadenceArcChargeMontage, Verbose, TEXT("%s: zero charged hold duration; skipping Hold adjustment for immediate auto-release."), *GetNameSafe(this));
+		return;
+	}
 	const double Threshold = Stage == ECadenceArcHoldStage::Charged
 		? Snapshot.ChargeFullTimestampSeconds : Change.EffectiveTimestampSeconds;
 	FPlaybackPlan Plan;
@@ -193,6 +218,8 @@ void UCadenceArcChargeMontageComponent::HandleStageChanged(FGameplayTag InputTag
 	{
 		if (FAnimMontageInstance* Instance = FindOwnedInstance(ActivePlayback); Instance && Instance->IsActive())
 			ConfigureInstance(*Instance, Entry, Plan);
+		else
+			UE_LOG(LogCadenceArcChargeMontage, Verbose, TEXT("%s: owned charge instance %d is no longer active; skipping adjustment."), *GetNameSafe(this), ActivePlayback.InstanceId);
 		return;
 	}
 	QueueActiveStop();
@@ -225,7 +252,11 @@ void UCadenceArcChargeMontageComponent::HandleStageChanged(FGameplayTag InputTag
 		}
 		Instance = Candidate;
 	}
-	if (!Instance) return;
+	if (!Instance)
+	{
+		UE_LOG(LogCadenceArcChargeMontage, Verbose, TEXT("%s: no new montage instance remains after playback callbacks; skipping ownership."), *GetNameSafe(this));
+		return;
+	}
 	FPlayback Started;
 	Started.AnimInstance = Anim;
 	Started.Montage = Entry.Montage;
@@ -237,6 +268,7 @@ void UCadenceArcChargeMontageComponent::HandleStageChanged(FGameplayTag InputTag
 		? Source->GetResolver()->GetInputHoldSnapshot() : FCadenceArcHoldSnapshot{};
 	if (bEndingPlay || PlayGeneration != LifecycleGeneration || !After.bHasHold || !(After.Token == Snapshot.Token))
 	{
+		UE_LOG(LogCadenceArcChargeMontage, Verbose, TEXT("%s: hold or component lifecycle changed during playback; cleaning instance %d."), *GetNameSafe(this), Started.InstanceId);
 		if (bEndingPlay) StopPlayback(Started);
 		else
 		{
@@ -246,7 +278,11 @@ void UCadenceArcChargeMontageComponent::HandleStageChanged(FGameplayTag InputTag
 		}
 		return;
 	}
-	if (!Instance->IsActive()) return;
+	if (!Instance->IsActive())
+	{
+		UE_LOG(LogCadenceArcChargeMontage, Verbose, TEXT("%s: new montage instance %d already stopped during callbacks; skipping configuration."), *GetNameSafe(this), Started.InstanceId);
+		return;
+	}
 	ActivePlayback = Started;
 	if (!ConfigureInstance(*Instance, Entry, Plan)) QueueActiveStop();
 }

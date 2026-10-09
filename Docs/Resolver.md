@@ -131,7 +131,7 @@ FCadenceArcActionCompletionOutcome NotifyActionCompleted(int64 RequestId, double
 
 ## 连招恢复
 
-图上的 `ComboResetSeconds` 和 `bFallbackToEntryOnNoMatch` 决定连招何时回到入口，字段说明见[动作图](Graph.md#连招恢复)。两者都只改变一次输入的选边源，不提前修改已提交的节点。
+图上的 `ComboResetSeconds` 和 `bFallbackToEntryOnNoMatch` 决定连招何时回到入口，字段说明见[动作图](Graph.md#连招恢复)。新建图默认停顿 1 秒重置，并开启无匹配时回退。两者都只改变一次输入的选边源，不提前修改已提交的节点。
 
 ### 超时重置
 

@@ -282,6 +282,7 @@ FCadenceArcHoldOutcome UCadenceArcResolver::BeginInputHold(
 	FCadenceArcHoldOutcome Outcome = BeginInputHoldImpl(Token, PressEvent);
 #if WITH_EDITOR
 	Record.HoldResult = Outcome.GetResult();
+	if (!Outcome.GetStageChanges().IsEmpty()) Record.StageReached = Outcome.GetStageChanges().Last().ToStage;
 	Record.Reason = Outcome.GetReason();
 	Record.bFailed = Outcome.GetResult() == ECadenceArcHoldResult::Rejected;
 	EndDebugRecord(Record);

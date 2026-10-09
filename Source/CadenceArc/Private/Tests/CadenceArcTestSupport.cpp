@@ -41,6 +41,9 @@ namespace CadenceArc::Tests
 	UCadenceArcGraph* MakeValidGraph()
 	{
 		UCadenceArcGraph* Graph = NewObject<UCadenceArcGraph>();
+		// 基础解析测试显式关闭恢复；新资产的默认值由恢复配置测试单独覆盖。
+		Graph->ComboResetSeconds = 0.0;
+		Graph->bFallbackToEntryOnNoMatch = false;
 		Graph->EntryActionTag = Action_Root;
 		Graph->Nodes.Reserve(8);
 

@@ -26,11 +26,11 @@ public:
 
 	// Completed 后空闲达到此秒数时恢复入口；0 表示禁用，必须为有限非负值。
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
-	double ComboResetSeconds = 0.0;
+	double ComboResetSeconds = 1.0;
 
-	// 非入口节点没有匹配转移时，允许用同一次输入尝试入口；默认关闭以保持原有行为。
+	// 非入口节点没有匹配转移时，允许用同一次输入尝试入口；默认开启。
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="CadenceArc|Graph")
-	bool bFallbackToEntryOnNoMatch = false;
+	bool bFallbackToEntryOnNoMatch = true;
 
 	// Runtime和编辑器共用的只读校验入口；每次清空输出，警告不影响返回的合法性。
 	bool ValidateGraph(TArray<FText>& OutErrors, TArray<FText>* OutWarnings = nullptr) const;

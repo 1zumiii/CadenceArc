@@ -26,9 +26,10 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FCadenceArcRecoveryValidationDefaultsTest::RunTest(const FString& Parameters)
 {
 	using namespace CadenceArc::Tests;
+	const UCadenceArcGraph* Defaults = NewObject<UCadenceArcGraph>();
+	TestEqual(TEXT("Reset defaults to one second"), Defaults->ComboResetSeconds, 1.0);
+	TestTrue(TEXT("Fallback defaults to enabled"), Defaults->bFallbackToEntryOnNoMatch);
 	UCadenceArcGraph* Graph = MakeValidGraph();
-	TestEqual(TEXT("Reset defaults to disabled"), Graph->ComboResetSeconds, 0.0);
-	TestFalse(TEXT("Fallback defaults to disabled"), Graph->bFallbackToEntryOnNoMatch);
 	const double Values[] = {0.0, 0.5, -0.5, std::numeric_limits<double>::quiet_NaN(),
 		std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
 	for (int32 Index = 0; Index < UE_ARRAY_COUNT(Values); ++Index)

@@ -19,7 +19,7 @@ Released 转移可以启用 `DurationRange`，按左闭右开的区间 `[Min, Ma
 
 在 `FCadenceArcNode::HoldChargeConfigs` 中添加 `FCadenceArcHoldChargeConfig`，可以为某个输入 Tag 启用蓄力保护和自动释放。配置后，该 Tag 的所有 Released 边都必须启用按住时长区间，且至少有一条无上限区间。所有无上限分支共用一个正数下限，作为满蓄力阈值。
 
-`ChargeStartSeconds` 指定开始蓄力的时长，必须小于满蓄力阈值。`MaxChargedHoldSeconds` 指定满蓄力后还可以保持多久；为 0 时，达到满蓄力阈值便自动释放。未配置 `HoldChargeConfigs` 时，输入仍可按松手时长选择动作，但不启用蓄力保护和自动释放。
+`ChargeStartSeconds` 指定开始蓄力的时长，必须大于等于 0，并小于满蓄力阈值。设为 0 时，授予资格便进入 `Charging`。`MaxChargedHoldSeconds` 指定满蓄力后还可以保持多久；为 0 时，达到满蓄力阈值便自动释放。未配置 `HoldChargeConfigs` 时，输入仍可按松手时长选择动作，但不启用蓄力保护和自动释放。
 
 ## 解析器 API
 
@@ -37,6 +37,8 @@ FCadenceArcHoldSnapshot        GetInputHoldSnapshot() const;
 | `AdvanceInputTime` | 已初始化，时间有限且非负；存在资格时，不早于该资格的最近观察时间 | 按顺序报告经过的阈值，到期时自动释放一次。没有待松手资格时接受调用，但不改变业务状态。 |
 | `ReleaseInputHold` | Token 匹配，且事件是同一 Tag 的 `Released` 事件 | 结束资格。`Ready` 时立即解析，`Executing` 时存为缓冲。 |
 | `CancelInputHold` | Token 与当前按住资格或其松手缓冲匹配 | 清空对应输入槽，不合成松手事件，也不撤回已产生的请求。 |
+
+`BeginInputHold` 的结果也提供 `GetStageChanges()`。蓄力起点为 0 时，成功授予的结果带有一次 `Charging`，生效时间为按下时刻；后续 `AdvanceInputTime` 不重复报告。直接接解析器的宿主需要处理这份结果中的阶段变化。使用 CadenceArc 组件时，组件在 `PressInput` 内通过 `OnHoldStageChanged` 广播，无需等待下一帧。
 
 使用 [CadenceArc 组件](Component.md) 时，下面的逐帧推进、Token 生成和松手提交都由组件完成，阶段变化通过 `OnHoldStageChanged` 发出。直接使用解析器时，宿主每帧**先推进时间**，处理完结果，再处理输入和生命周期回调：
 
@@ -74,7 +76,7 @@ if (Advance.HasActionRequest())
 
 ## 宿主接入注意事项
 
-- 直接调用解析器时，`BeginInputHold` 要求当前节点有该 Tag 的 `Released` 转移；只有 `Pressed` 转移时返回 `NoMatchingTransition`。使用 CadenceArc 组件时，配置为 `HoldIfAvailable` 的输入在这种节点上改为按下立即提交，详见[CadenceArc 组件](Component.md#输入方式)。
+- 直接调用解析器时，`BeginInputHold` 要求实际选边源有该 Tag 的 `Released` 转移；选边源受超时重置和入口回退规则影响。仍找不到时返回 `NoMatchingTransition`。使用 CadenceArc 组件时，`HoldIfAvailable` 也考虑这些恢复规则，没有可用的 `Released` 转移时改为按下提交，详见[CadenceArc 组件](Component.md#输入方式)。
 - 资格申请失败或资格已经结束时，再调用 `ReleaseInputHold` 会返回 `NoMatchingHold`，调试历史将其标记为失败。CadenceArc 组件先用 `GetInputHoldSnapshot()` 确认 Token 是否仍然匹配，再提交松手事件。
 - 如果未收到物理松手，且没有触发自动释放或其他清理操作，资格会持续保留。宿主在按住期间失去控制时，例如取消控制 Pawn 或窗口失焦，应取消仍有效的资格，并清理输入追踪状态。使用 [Enhanced Input 适配](EnhancedInput.md#失去输入时的清理)时，重新绑定、解除绑定和控制器变化会自动取消按住中的输入。
 - 使用 MSVC 的 `/fp:fast` 编译时，需要精确浮点舍入的代码应显式启用精确模式。例如，`CadenceArcHoldTiming.cpp` 使用 `#pragma float_control(precise, on)` 保护阈值计算。

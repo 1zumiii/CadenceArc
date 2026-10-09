@@ -44,6 +44,9 @@ namespace CadenceArc::Editor::Tests
 	static UCadenceArcResolver* MakeDisplayResolver(FAutomationTestBase& Test)
 	{
 		UCadenceArcGraph* Graph = NewObject<UCadenceArcGraph>();
+		// 这里验证 ignored 显示，显式关闭会把无出边输入重新解析为动作的恢复功能。
+		Graph->ComboResetSeconds = 0.0;
+		Graph->bFallbackToEntryOnNoMatch = false;
 		Graph->EntryActionTag = Display_Root();
 		Graph->Nodes.Reserve(4);
 		FCadenceArcNode& Root = Graph->Nodes.AddDefaulted_GetRef();

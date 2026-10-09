@@ -67,6 +67,8 @@ namespace CadenceArc::Tests
 	static UCadenceArcGraph* MakeComponentGraph(const double MaxChargedHoldSeconds)
 	{
 		UCadenceArcGraph* Graph = NewObject<UCadenceArcGraph>();
+		Graph->ComboResetSeconds = 0.0;
+		Graph->bFallbackToEntryOnNoMatch = false;
 		Graph->EntryActionTag = Action_Root;
 		Graph->Nodes.Reserve(8);
 		AddComponentNode(Graph, Action_Root, Action_Light01, Action_Heavy01, Action_Heavy02, MaxChargedHoldSeconds);
@@ -134,6 +136,38 @@ namespace CadenceArc::Tests
 		               static_cast<int32>(Component->InitializeResolver(MakeComponentGraph(MaxChargedHoldSeconds))),
 		               static_cast<int32>(ECadenceArcResolverInitResult::Success));
 		return Component;
+	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCadenceArcZeroChargeStartTest,
+		"CadenceArc.Component.ZeroChargeStartBroadcastsOnce",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcZeroChargeStartTest::RunTest(const FString& Parameters)
+	{
+		FComponentHost Host;
+		UCadenceArcComponent* Component = NewObject<UCadenceArcComponent>();
+		Host.Bind(Component);
+		Component->SetInputMode(Input_Heavy, ECadenceArcInputMode::HoldRelease);
+		UCadenceArcGraph* Graph = MakeComponentGraph(1.0);
+		Graph->Nodes[0].HoldChargeConfigs[0].ChargeStartSeconds = 0.0;
+		Component->InitializeResolver(Graph);
+		double EffectiveTime = -1.0;
+		Component->OnHoldStageChangedNative.AddLambda([&](FGameplayTag Tag, const FCadenceArcInputStageChange& Change)
+		{
+			TestEqual(TEXT("Stage input tag"), Tag, Input_Heavy.GetTag());
+			EffectiveTime = Change.EffectiveTimestampSeconds;
+		});
+		Host.Now = 1.0;
+		Component->PressInput(Input_Heavy);
+		TestEqual(TEXT("Press immediately broadcasts Charging once"), Host.Stages.Num(), 1);
+		if (!Host.Stages.IsEmpty()) TestEqual(TEXT("Immediate stage"), Host.Stages[0], ECadenceArcHoldStage::Charging);
+		TestEqual(TEXT("Immediate stage uses press time"), EffectiveTime, 1.0);
+		Host.Tick(1.0);
+		Host.Tick(1.25);
+		TestEqual(TEXT("Following advances do not duplicate Charging"), Host.Stages.Num(), 1);
+		Host.Tick(1.5);
+		TestEqual(TEXT("Full threshold emits Charged"), Host.Stages.Num(), 2);
+		return true;
 	}
 
 	static bool ExpectStarted(
@@ -614,8 +648,10 @@ namespace CadenceArc::Tests
 
 	bool FCadenceArcComponentHoldFallbackTest::RunTest(const FString& Parameters)
 	{
-		// Root 上 Heavy 只有 Pressed 转移：HoldRelease 的键不申请资格，按下立即提交
+		// Root 上 Heavy 只有 Pressed 转移：HoldIfAvailable 按下立即提交；本测试关闭图级恢复。
 		UCadenceArcGraph* Graph = NewObject<UCadenceArcGraph>();
+		Graph->ComboResetSeconds = 0.0;
+		Graph->bFallbackToEntryOnNoMatch = false;
 		Graph->EntryActionTag = Action_Root;
 		FCadenceArcNode& Root = Graph->Nodes.AddDefaulted_GetRef();
 		Root.ActionTag = Action_Root;

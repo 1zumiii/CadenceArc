@@ -48,14 +48,14 @@ Tag 按层级匹配：上下文包含 `State.Air.Jump` 时，满足 `Required = 
 
 ## 连招恢复
 
-两个图级字段控制连招什么时候回到入口，默认都关闭，已有资产的行为不变。
+两个图级字段控制连招什么时候回到入口。新建图默认在停顿 1 秒后重置，并开启无匹配时回退入口。
 
 | 字段 | 默认 | 含义 |
 | --- | --- | --- |
-| `ComboResetSeconds` | 0（关闭） | 上一个动作完成后，停顿达到这个秒数时，下一次输入从入口选边 |
-| `bFallbackToEntryOnNoMatch` | 关 | 当前节点没有匹配这个输入的转移时，改从入口选边 |
+| `ComboResetSeconds` | 1.0 | 上一个动作完成后，停顿达到这个秒数时，下一次输入从入口选边；0 表示关闭 |
+| `bFallbackToEntryOnNoMatch` | 开 | 当前节点没有匹配这个输入的转移时，改从入口选边 |
 
-例如，`ComboResetSeconds = 1.0` 时，Light01 完成后 1 秒内按 Light 接 Light02，超过 1 秒再按 Light 则重新从 Light01 开始。开启回退后，打到没有后续的终结技时，再按 Light 也会重新出 Light01，而不是没有反应。
+例如，`ComboResetSeconds = 1.0` 时，Light01 完成后 1 秒内按 Light 接 Light02，达到 1 秒再按 Light 则重新从 Light01 开始。开启回退后，打到没有后续的终结技时，再按 Light 也会重新出 Light01。
 
 两者都只改变“从哪个节点选边”，不会提前改变已提交的节点。运行时规则见[解析器](Resolver.md#连招恢复)。
 

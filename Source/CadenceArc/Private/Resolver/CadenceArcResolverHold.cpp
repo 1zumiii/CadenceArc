@@ -126,6 +126,11 @@ FCadenceArcHoldOutcome UCadenceArcResolver::BeginInputHoldImpl(
 
 	CheckSlotInvariants();
 	Outcome.SetGranted();
+	// Advance 只报告 (LastObserved, Now]，按下即蓄力的边界由授予结果报告一次。
+	if (Timeline.bHasCharge && Timeline.ChargeStartTime == PressEvent.TimestampSeconds)
+	{
+		Outcome.AddStageChange(ECadenceArcHoldStage::Charging, Timeline.ChargeStartTime);
+	}
 	return Outcome;
 }
 

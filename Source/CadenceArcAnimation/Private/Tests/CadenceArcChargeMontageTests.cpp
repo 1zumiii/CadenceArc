@@ -287,11 +287,16 @@ bool FCadenceArcChargeMontageIntegrationTest::RunTest(const FString& Parameters)
 	Arc->TickComponent(0.0f, LEVELTICK_All, nullptr);
 	TestEqual(TEXT("Automatic release schedules cleanup"), FCadenceArcChargeMontageTestAccess::PendingCount(*Presentation), 1);
 	Arc->ReleaseInput(InputTag);
+	Graph->Nodes[0].HoldChargeConfigs[0].ChargeStartSeconds = 0.0;
 	Now = 7.0;
 	Arc->PressInput(InputTag);
+	FAnimMontageInstance* Immediate = Anim->GetActiveInstanceForMontage(Animation.Montage);
+	if (!TestNotNull(TEXT("Zero charge start plays immediately on PressInput"), Immediate)) return false;
+	TestNotEqual(TEXT("Immediate presentation uses a new instance"), Immediate->GetInstanceID(), Late->GetInstanceID());
+	TestEqual(TEXT("Immediate windup starts at section beginning"), Immediate->GetPosition(), 0.0f);
 	Now = 10.5;
 	Arc->TickComponent(0.0f, LEVELTICK_All, nullptr);
-	TestEqual(TEXT("Advance past automatic release skips historical stage playback"), Anim->MontageInstances.Num(), 2);
+	TestEqual(TEXT("Advance past automatic release skips historical stage playback"), Anim->MontageInstances.Num(), 3);
 	const int32 LateId = Late->GetInstanceID();
 	Actor->Destroy();
 	FAnimMontageInstance* Remaining = Anim->GetMontageInstanceForID(LateId);

@@ -117,6 +117,37 @@ namespace CadenceArc::Tests
 		return Event;
 	}
 
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCadenceArcHoldImmediateStageTest,
+		"CadenceArc.Resolver.Hold.ImmediateChargingOutcome",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+	bool FCadenceArcHoldImmediateStageTest::RunTest(const FString& Parameters)
+	{
+		UCadenceArcGraph* Graph = MakeChargeGraph();
+		Graph->Nodes[0].HoldChargeConfigs[0].ChargeStartSeconds = 0.0;
+		UCadenceArcResolver* Resolver = NewObject<UCadenceArcResolver>();
+		Resolver->Initialize(Graph);
+		const FCadenceArcInputToken Token = MakeHoldToken();
+		const FCadenceArcHoldOutcome Granted = Resolver->BeginInputHold(Token, MakeHoldPress(Input_Heavy, 1.0));
+		TestEqual(TEXT("Immediate hold granted"), Granted.GetResult(), ECadenceArcHoldResult::Granted);
+		TestEqual(TEXT("Grant carries one stage"), Granted.GetStageChanges().Num(), 1);
+		if (!Granted.GetStageChanges().IsEmpty())
+		{
+			TestEqual(TEXT("Grant reaches Charging"), Granted.GetStageChanges()[0].ToStage, ECadenceArcHoldStage::Charging);
+			TestEqual(TEXT("Grant threshold equals press time"), Granted.GetStageChanges()[0].EffectiveTimestampSeconds, 1.0);
+		}
+		TestTrue(TEXT("Same-time advance has no duplicate"), Resolver->AdvanceInputTime(1.0).GetStageChanges().IsEmpty());
+		const FCadenceArcHoldOutcome Rejected = Resolver->BeginInputHold(MakeHoldToken(2), MakeHoldPress(Input_Heavy, 1.0));
+		TestEqual(TEXT("Protected replacement rejected"), Rejected.GetResult(), ECadenceArcHoldResult::Rejected);
+		TestTrue(TEXT("Rejected grant has no stage"), Rejected.GetStageChanges().IsEmpty());
+		TestTrue(TEXT("Cancel has no stage"), Resolver->CancelInputHold(Token).GetStageChanges().IsEmpty());
+		Resolver->Initialize(MakeChargeGraph(false));
+		TestTrue(TEXT("Uncharged hold has no stage"), Resolver->BeginInputHold(Token, MakeHoldPress(Input_Heavy, 1.0)).GetStageChanges().IsEmpty());
+		Resolver->Initialize(MakeChargeGraph());
+		TestTrue(TEXT("Future threshold stays pending"), Resolver->BeginInputHold(Token, MakeHoldPress(Input_Heavy, 1.0)).GetStageChanges().IsEmpty());
+		return true;
+	}
+
 	static bool ExpectHoldOutcome(
 		FAutomationTestBase& Test, const TCHAR* What, const FCadenceArcHoldOutcome& Actual,
 		const ECadenceArcHoldResult ExpectedResult, const ECadenceArcResolutionReason ExpectedReason)

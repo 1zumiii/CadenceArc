@@ -356,6 +356,14 @@ FCadenceArcInputResult UCadenceArcComponent::PressInputInternal(
 	// 申请被拒绝时仍保留按键配对，直到真实松开或取消
 	const FCadenceArcHoldOutcome Outcome = Resolver->BeginInputHold(Pressed.GetToken(), PressEvent);
 	NotifyHoldEndedIfChanged(Before, ECadenceArcHoldEndReason::Replaced);
+	for (const FCadenceArcInputStageChange& Change : Outcome.GetStageChanges())
+	{
+		// 结束旧资格的监听者可以同步取消或替换新资格，不能再广播过期的阶段。
+		const FCadenceArcHoldSnapshot Current = CaptureHold();
+		if (!Current.bHasHold || !(Current.Token == Pressed.GetToken())) break;
+		OnHoldStageChangedNative.Broadcast(InputTag, Change);
+		OnHoldStageChanged.Broadcast(InputTag, Change);
+	}
 	return Outcome.GetResult() == ECadenceArcHoldResult::Granted
 		? MakeInputResult(ECadenceArcInputStatus::HoldGranted)
 		: MakeFailureResult(Outcome.GetReason());
